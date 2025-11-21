@@ -41,7 +41,7 @@ export default function HomePage() {
         className="absolute inset-0 w-full h-full object-cover"
         onError={(e) => console.error('Video error:', e)}
       >
-        <source src="/frc" type="video/mp4" />
+        <source src="/weather.mp4" type="video/mp4" />
         Your browser does not support the video tag.
       </video>
 

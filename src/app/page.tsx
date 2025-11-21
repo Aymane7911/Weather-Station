@@ -59,9 +59,12 @@ export default function HomePage() {
       <div className={`fixed top-0 left-0 right-0 z-20 flex items-center justify-between px-6 sm:px-8 py-4 transition-all duration-700 ${
         isLoaded ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-4'
       }`}>
-        {/* Logo from public folder */}
-        <div>
-          <img src="/FRC_logo.png" alt="Logo" className="h-25 w-auto brightness-150" />
+        {/* WeatherHub Logo and Title */}
+        <div className="flex items-center gap-2">
+          <div className="p-2 bg-gradient-to-br from-blue-400 to-cyan-400 rounded-full">
+            <Cloud className="w-6 h-6 text-white" />
+          </div>
+          <h1 className="text-2xl font-black bg-gradient-to-r from-blue-400 to-cyan-400 bg-clip-text text-transparent">WeatherHub</h1>
         </div>
 
         {/* Auth Buttons */}
@@ -86,27 +89,13 @@ export default function HomePage() {
 
       {/* Content */}
       <div className="relative z-10 min-h-screen flex flex-col items-center justify-center px-4 sm:px-6 lg:px-8 pt-20">
-        {/* Logo/Header Area */}
-        <div className={`mb-8 transform transition-all duration-1000 ${
-          isLoaded && !showInfo ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4'
-        } ${fadeOut ? 'opacity-0' : ''}`}>
-          <div className="flex items-center justify-center gap-3 mb-4">
-            <div className="p-3 bg-gradient-to-br from-blue-400 to-cyan-400 rounded-full shadow-2xl">
-              <Cloud className="w-8 h-8 text-white" />
-            </div>
-            <h1 className="text-4xl sm:text-5xl font-black bg-gradient-to-r from-blue-400 via-cyan-400 to-indigo-400 bg-clip-text text-transparent">
-              WeatherHub
-            </h1>
-          </div>
-        </div>
         {/* Main Content */}
         {!showInfo ? (
           <div className={`text-center max-w-2xl mx-auto transform transition-all duration-500 ${
             isLoaded && !fadeOut ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-6'
           }`}>
-            <h2 className="text-5xl sm:text-6xl lg:text-7xl font-black text-white mb-6 leading-tight">
-              Real-Time Weather
-              <span className="bg-gradient-to-r from-blue-400 to-cyan-400 bg-clip-text text-transparent"> Insights</span>
+            <h2 className="text-5xl sm:text-4xl lg:text-4xl font-black text-white mb-6 leading-tight">
+              Real-Time Weather Insights
             </h2>
 
             <p className={`text-lg sm:text-xl text-gray-300 mb-8 leading-relaxed transform transition-all duration-500 delay-100 ${
@@ -126,22 +115,7 @@ export default function HomePage() {
               <ArrowRight className="w-5 h-5" />
             </button>
 
-            {/* Features Grid */}
-            <div className={`grid grid-cols-1 sm:grid-cols-3 gap-6 transform transition-all duration-500 delay-300 ${
-              isLoaded && !fadeOut ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-6'
-            }`}>
-              {[
-                {  title: 'Live Monitoring', desc: 'Track multiple weather stations' },
-                {  title: 'Data Analytics', desc: 'Comprehensive weather insights' },
-                {  title: 'Real-Time Updates', desc: 'Instant notifications & alerts' }
-              ].map((feature, idx) => (
-                <div key={idx} className="bg-white/10 backdrop-blur-md border border-white/20 rounded-xl p-6 hover:bg-white/20 transition-all duration-300">
-                  
-                  <h3 className="text-white font-bold mb-2">{feature.title}</h3>
-                  <p className="text-gray-300 text-sm">{feature.desc}</p>
-                </div>
-              ))}
-            </div>
+           
           </div>
         ) : (
           /* Info Section */

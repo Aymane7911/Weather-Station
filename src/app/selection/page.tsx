@@ -2,6 +2,8 @@
 
 import React, { useState, useEffect } from 'react';
 import { Cloud, Edit2, Check, X, Loader2, MapPin, Activity, RefreshCw, Plus, Search, AlertCircle, LogOut, User, Menu, Wind, Home, Clock, Download, Settings } from 'lucide-react';
+import Head from 'next/head';
+
 
 interface WeatherStation {
   id: string;
@@ -12,6 +14,8 @@ interface WeatherStation {
   status: 'active' | 'inactive' | 'warning';
   blobCount?: number;
 }
+
+
 
 const WeatherStationSelector = () => {
   const [stations, setStations] = useState<WeatherStation[]>([]);
@@ -86,6 +90,10 @@ const WeatherStationSelector = () => {
     }
   };
 
+
+  useEffect(() => {
+  document.title = 'Weather Selection';
+}, []);
   const fetchUserInfo = async () => {
     try {
       const response = await fetch('/api/auth/me');
@@ -338,13 +346,7 @@ const WeatherStationSelector = () => {
 
             <div className="my-4 border-t border-blue-500/30"></div>
             
-            <button 
-              onClick={() => setSidebarOpen(false)}
-              className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-blue-100 hover:bg-white/10 transition-all font-medium text-sm"
-            >
-              <Download className="w-5 h-5" />
-              <span>Export Data</span>
-            </button>
+            
 
             {!adminCheckLoading && isAdmin && (
               <>
@@ -419,6 +421,10 @@ const WeatherStationSelector = () => {
   }
 
   return (
+    <>
+    <Head>
+      <title>Weather Stations - Select Station</title>
+    </Head>
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50">
       <Sidebar />
       
@@ -590,6 +596,7 @@ const WeatherStationSelector = () => {
         )}
       </main>
     </div>
+     </>
   );
 };
 

@@ -253,6 +253,9 @@ useEffect(() => {
     }
   };
 
+  useEffect(() => {
+    document.title = 'Weather Dashboard';
+  }, []);
   const fetchWeatherData = async (container: string) => {
   setLoading(true);
   setError(null);
@@ -795,13 +798,7 @@ useEffect(() => {
 
           <div className="my-4 border-t border-blue-500/30"></div>
           
-          <button 
-            onClick={() => setSidebarOpen(false)}
-            className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-blue-100 hover:bg-white/10 transition-all font-medium text-sm"
-          >
-            <Download className="w-5 h-5" />
-            <span>Export Data</span>
-          </button>
+          
 
           {/* Admin Section - Only visible to admins */}
           {!adminCheckLoading && isAdmin && (

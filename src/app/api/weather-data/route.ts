@@ -17,36 +17,81 @@ interface CachedData {
   timestamp: number;
 }
 
-// In-memory cache with TTL
-const cache = new Map<string, CachedData>();
-const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+interface ParsedWeatherData {
+  [key: string]: any;
+}
 
-function getFromCache(key: string): any {
+// Advanced caching with multiple layers
+const blobListCache = new Map<string, CachedData>();
+const parsedDataCache = new Map<string, CachedData>();
+const BLOB_LIST_TTL = 10 * 60 * 1000; // 10 minutes
+const PARSED_DATA_TTL = 30 * 60 * 1000; // 30 minutes
+
+function getFromCache(cache: Map<string, CachedData>, key: string): any {
   const cached = cache.get(key);
-  if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
+  if (cached && Date.now() - cached.timestamp < BLOB_LIST_TTL) {
     return cached.data;
   }
   cache.delete(key);
   return null;
 }
 
-function setCache(key: string, data: any): void {
+function setCache(cache: Map<string, CachedData>, key: string, data: any): void {
   cache.set(key, { data, timestamp: Date.now() });
+}
+
+// Optimized CSV parser with minimal processing
+async function parseCSVFast(csvContent: string): Promise<ParsedWeatherData | null> {
+  try {
+    const parsed = await csvParser.parseFromString(csvContent, {
+      header: true,
+      skipEmptyLines: true,
+      dynamicTyping: false,
+      delimiter: '',
+      fastMode: true, // Enable fast mode if available
+      transform: (value: string, field: string | number) => {
+        if (typeof value !== 'string') return value;
+        value = value.trim();
+        
+        if (!value || value.toLowerCase() === 'null' || value.toLowerCase() === 'n/a') {
+          return null;
+        }
+        
+        // Only parse numbers for specific fields
+        const numericFields = ['tempC', 'humidity', 'pressure', 'irradiance', 'avgWindSpeed', 'rainRatePerHour', 'direction'];
+        if (numericFields.includes(String(field))) {
+          const num = parseFloat(value);
+          if (!isNaN(num) && isFinite(num)) {
+            return num;
+          }
+        }
+        
+        return value;
+      }
+    });
+
+    return parsed.data?.[0] || null;
+  } catch (error) {
+    console.error('Error parsing CSV:', error);
+    return null;
+  }
 }
 
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json().catch(() => ({}));
     const containerName = body.containerName || 'ws-tawyeen';
-    const limit = body.limit || 50; // Limit records per request
+    const limit = Math.min(body.limit || 100, 200); // Increased default limit to 100, max 200
     const offset = body.offset || 0;
 
-    console.log(`📡 [API] Fetching weather data from container: ${containerName}`);
+    console.log(`📡 [API] Fetching weather data - Container: ${containerName}, Limit: ${limit}, Offset: ${offset}`);
 
-    const cacheKey = `${containerName}-list`;
-    let blobs = getFromCache(cacheKey);
+    const blobCacheKey = `${containerName}-list`;
+    let blobs = getFromCache(blobListCache, blobCacheKey);
 
+    // Fetch blob list if not cached
     if (!blobs) {
+      console.log('📝 [API] Blob list cache miss - fetching from Azure');
       const azureService = new AzureBlobService(containerName);
 
       const containerExists = await azureService.containerExists();
@@ -58,22 +103,24 @@ export async function POST(request: NextRequest) {
       }
 
       blobs = await azureService.listBlobs();
-      setCache(cacheKey, blobs);
+      setCache(blobListCache, blobCacheKey, blobs);
+    } else {
+      console.log('✅ [API] Using cached blob list');
     }
 
-    console.log(`📋 [API] Found ${blobs.length} blobs in container`);
-
-    if (blobs.length === 0) {
+    if (!blobs || blobs.length === 0) {
       return NextResponse.json(
         { error: 'No files found in container' },
         { status: 404 }
       );
     }
 
-    // Filter CSV files and sort by modified date (newest first)
+    // Filter and sort CSV files (already sorted by Azure)
     const weatherBlobs = (blobs as BlobItem[])
       .filter((blob: BlobItem) => blob.name.endsWith('.csv'))
-      .sort((a: BlobItem, b: BlobItem) => new Date(b.lastModified).getTime() - new Date(a.lastModified).getTime());
+      .sort((a: BlobItem, b: BlobItem) => 
+        new Date(b.lastModified).getTime() - new Date(a.lastModified).getTime()
+      );
 
     if (weatherBlobs.length === 0) {
       return NextResponse.json(
@@ -82,86 +129,83 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    console.log(`📄 [API] Found ${weatherBlobs.length} CSV files, fetching latest ${limit}`);
+    console.log(`📋 [API] Total CSV files: ${weatherBlobs.length}, Processing ${Math.min(limit, weatherBlobs.length - offset)}`);
 
-    // Only process the latest N files (pagination)
+    // Paginated blob selection
     const paginatedBlobs = weatherBlobs.slice(offset, offset + limit);
-    const allDataWithTimestamps: any[] = [];
+    const allDataWithTimestamps: ParsedWeatherData[] = [];
+    const azureService = new AzureBlobService(containerName);
 
-    for (const blob of paginatedBlobs) {
+    // Parallel processing with Promise.all for faster execution
+    const processingPromises = paginatedBlobs.map(async (blob: BlobItem) => {
       try {
-        console.log(`📄 [API] Downloading blob: ${blob.name}`);
-        const azureService = new AzureBlobService(containerName);
-        const csvContent = await azureService.downloadBlob(blob.name);
+        const dataCacheKey = `${containerName}-${blob.name}`;
+        
+        // Check if parsed data is cached
+        let dataRow = getFromCache(parsedDataCache, dataCacheKey);
+        
+        if (!dataRow) {
+          console.log(`📥 [API] Downloading: ${blob.name}`);
+          const csvContent = await azureService.downloadBlob(blob.name);
 
-        if (!csvContent || csvContent.trim().length === 0) {
-          console.warn(`⚠️ [API] Skipping empty file: ${blob.name}`);
-          continue;
-        }
-
-        const parsed = await csvParser.parseFromString(csvContent, {
-          header: true,
-          skipEmptyLines: true,
-          dynamicTyping: false,
-          delimiter: '',
-          transform: (value: string, field: string | number) => {
-            if (typeof value === 'string') {
-              value = value.trim();
-
-              if (value === '' || value.toLowerCase() === 'null' || value.toLowerCase() === 'n/a') {
-                return null;
-              }
-
-              const num = parseFloat(value);
-              if (!isNaN(num) && isFinite(num)) {
-                return num;
-              }
-            }
-            return value;
+          if (!csvContent || csvContent.trim().length === 0) {
+            console.warn(`⚠️ [API] Empty file skipped: ${blob.name}`);
+            return null;
           }
-        });
 
-        if (parsed.data && parsed.data.length > 0) {
+          const parsed = await parseCSVFast(csvContent);
+          if (!parsed) {
+            console.warn(`⚠️ [API] Parse failed: ${blob.name}`);
+            return null;
+          }
+
           const blobTime = blob.lastModified ? new Date(blob.lastModified) : new Date();
 
-          const dataRow = {
-            ...parsed.data[0],
+          dataRow = {
+            ...parsed,
             time: blobTime.toISOString(),
             timestamp: blobTime.toISOString(),
-            fullDateTime: blobTime.toLocaleString('en-US', {
-              month: 'short',
-              day: 'numeric',
-              hour: '2-digit',
-              minute: '2-digit',
-              hour12: true
-            }),
             blobName: blob.name
           };
 
-          allDataWithTimestamps.push(dataRow);
+          // Cache the parsed data
+          setCache(parsedDataCache, dataCacheKey, dataRow);
+        } else {
+          console.log(`✅ [API] Using cached data: ${blob.name}`);
         }
+
+        return dataRow;
       } catch (error) {
-        console.error(`❌ [API] Error processing blob ${blob.name}:`, error);
-        continue;
+        console.error(`❌ [API] Error processing ${blob.name}:`, error);
+        return null;
       }
-    }
+    });
 
-    allDataWithTimestamps.sort((a: any, b: any) =>
-      new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
-    );
+    // Wait for all blob downloads and parsing to complete
+    const results = await Promise.all(processingPromises);
+    const validResults = results.filter((item): item is ParsedWeatherData => item !== null);
 
-    console.log(`✅ [API] Combined ${allDataWithTimestamps.length} data points`);
-
-    if (!allDataWithTimestamps || allDataWithTimestamps.length === 0) {
+    if (validResults.length === 0) {
       return NextResponse.json(
-        { error: 'Failed to parse CSV data or no data rows found' },
+        { error: 'Failed to parse CSV data' },
         { status: 500 }
       );
     }
 
+    // Sort by timestamp
+    validResults.sort((a: any, b: any) =>
+      new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+    );
+
+    console.log(`✅ [API] Successfully processed ${validResults.length} data points`);
+
+    const headers = Object.keys(validResults[0] || {}).filter(k =>
+      !['time', 'timestamp', 'fullDateTime', 'blobName'].includes(k)
+    );
+
     return NextResponse.json({
       success: true,
-      data: allDataWithTimestamps,
+      data: validResults,
       pagination: {
         offset,
         limit,
@@ -169,24 +213,22 @@ export async function POST(request: NextRequest) {
         hasMore: offset + limit < weatherBlobs.length
       },
       metadata: {
-        totalRows: allDataWithTimestamps.length,
+        totalRows: validResults.length,
         totalFiles: weatherBlobs.length,
-        headers: Object.keys(allDataWithTimestamps[0] || {}).filter(k =>
-          !['time', 'timestamp', 'fullDateTime', 'blobName'].includes(k)
-        ),
+        headers,
         blobInfo: {
           name: weatherBlobs[0].name,
           lastModified: weatherBlobs[0].lastModified,
           size: weatherBlobs[0].size,
           url: weatherBlobs[0].url
         },
-        parsedAt: new Date().toISOString()
+        parsedAt: new Date().toISOString(),
+        cachedResults: results.length - validResults.length
       }
     }, { status: 200 });
 
   } catch (error) {
     console.error('❌ [API] Error fetching weather data:', error);
-
     const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
 
     return NextResponse.json(
@@ -204,10 +246,10 @@ export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url);
     const containerName = searchParams.get('container') || 'ws-tawyeen';
 
-    console.log(`📡 [API GET] Listing blobs in container: ${containerName}`);
+    console.log(`📡 [API GET] Listing blobs: ${containerName}`);
 
     const cacheKey = `${containerName}-list`;
-    let blobs = getFromCache(cacheKey);
+    let blobs = getFromCache(blobListCache, cacheKey);
 
     if (!blobs) {
       const azureService = new AzureBlobService(containerName);
@@ -221,14 +263,14 @@ export async function GET(request: NextRequest) {
       }
 
       blobs = await azureService.listBlobs();
-      setCache(cacheKey, blobs);
+      setCache(blobListCache, cacheKey, blobs);
     }
 
     return NextResponse.json({
       success: true,
       container: containerName,
       blobCount: blobs.length,
-      blobs: blobs.map((blob: BlobItem) => ({
+      blobs: (blobs as BlobItem[]).map((blob: BlobItem) => ({
         name: blob.name,
         lastModified: blob.lastModified,
         size: blob.size,
@@ -238,7 +280,6 @@ export async function GET(request: NextRequest) {
 
   } catch (error) {
     console.error('❌ [API GET] Error listing blobs:', error);
-
     const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
 
     return NextResponse.json(

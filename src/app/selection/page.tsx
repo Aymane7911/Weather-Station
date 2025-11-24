@@ -392,7 +392,6 @@ const WeatherStationSelector = () => {
             <Cloud className="w-12 h-12 text-blue-600 absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2" />
           </div>
           <p className="text-2xl font-bold text-gray-700 mb-2">Loading Weather Stations</p>
-          <p className="text-gray-500">Fetching from Azure Storage...</p>
         </div>
       </div>
     );

@@ -303,7 +303,7 @@ const AdminAccessManagement = () => {
           <button
             onClick={() => {
               fetch('/api/auth/logout', { method: 'POST' }).then(() => {
-                window.location.href = '/auth/login';
+                window.location.href = '/';
               });
             }}
             className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl bg-gradient-to-r from-red-500/20 to-orange-500/20 text-red-300 hover:text-red-200 hover:from-red-500/30 hover:to-orange-500/30 transition-all border border-red-500/30 ${!sidebarOpen && 'justify-center'}`}

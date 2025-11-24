@@ -827,7 +827,7 @@ useEffect(() => {
           <button 
             onClick={() => {
               fetch('/api/auth/logout', { method: 'POST' }).then(() => {
-                window.location.href = '/auth/login';
+                window.location.href = '/';
               });
             }}
             className="w-full flex items-center gap-3 px-4 py-3 rounded-xl bg-red-500/20 text-red-200 hover:bg-red-500/30 transition-all font-medium text-sm border border-red-400/30"

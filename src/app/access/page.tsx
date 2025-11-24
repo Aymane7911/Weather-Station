@@ -291,11 +291,7 @@ const AdminAccessManagement = () => {
 
         
 
-          <button className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-purple-300 hover:text-white hover:bg-purple-500/20 transition-all group">
-            <Settings className="w-5 h-5" />
-            {sidebarOpen && <span className="font-semibold">Settings</span>}
-            {sidebarOpen && <ChevronRight className="w-4 h-4 ml-auto opacity-0 group-hover:opacity-100 transition-opacity" />}
-          </button>
+          
         </nav>
 
         {/* Sidebar Footer */}

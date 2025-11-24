@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
-import { Activity, Wind, Sun, Droplets, Gauge, CloudRain, RefreshCw, AlertCircle, Navigation, Menu, X, Home, BarChart3, Settings, Download, Clock, ArrowLeft } from 'lucide-react';
+import { Activity, Wind, Sun, Droplets, Gauge, CloudRain, RefreshCw, AlertCircle, Navigation, Menu, X, Home, BarChart3, Settings, Download, Clock, ArrowLeft, LogOut } from 'lucide-react';
 
 interface WeatherDataPoint {
   time?: string;
@@ -21,6 +21,10 @@ const WeatherDashboard = () => {
   const [weatherData, setWeatherData] = useState<WeatherDataPoint[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
+  const [offset, setOffset] = useState<number>(0);
+  const [hasMore, setHasMore] = useState<boolean>(false);
+  const [isLoadingMore, setIsLoadingMore] = useState<boolean>(false);
+  const LIMIT = 50; // Load 50 records at a time
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
   const [containerName, setContainerName] = useState<string>('ws-tawyeen');
   const [stationName, setStationName] = useState<string>('Weather Station');
@@ -36,21 +40,25 @@ const WeatherDashboard = () => {
   };
 
   useEffect(() => {
-    const urlParams = new URLSearchParams(window.location.search);
-    const urlContainer = urlParams.get('container');
-    const storedContainer = localStorage.getItem('selected_station');
-    const storedName = localStorage.getItem('selected_station_name');
-    
-    const selectedContainer = urlContainer || storedContainer || 'ws-tawyeen';
-    const selectedName = storedName || selectedContainer;
-    
-    setContainerName(selectedContainer);
-    setStationName(selectedName);
-    
-    fetchWeatherData(selectedContainer);
-    const interval = setInterval(() => fetchWeatherData(selectedContainer), 5 * 60 * 1000);
-    return () => clearInterval(interval);
-  }, []);
+  const urlParams = new URLSearchParams(window.location.search);
+  const urlContainer = urlParams.get('container');
+  const storedContainer = localStorage.getItem('selected_station');
+  const storedName = localStorage.getItem('selected_station_name');
+
+  const selectedContainer = urlContainer || storedContainer || 'ws-tawyeen';
+  const selectedName = storedName || selectedContainer;
+
+  setContainerName(selectedContainer);
+  setStationName(selectedName);
+
+  fetchWeatherData(selectedContainer, false);
+  const interval = setInterval(() => fetchWeatherData(selectedContainer, false), 5 * 60 * 1000);
+  return () => clearInterval(interval);
+}, []);
+
+const handleLoadMore = () => {
+  fetchWeatherData(containerName, true);
+};
 
   const parseDateTime = (dateString: string): Date | null => {
     logDebug('Parsing date string:', dateString);
@@ -225,92 +233,115 @@ const WeatherDashboard = () => {
     }
   };
 
-  const fetchWeatherData = async (container: string) => {
+  const fetchWeatherData = async (container: string, isLoadMore: boolean = false) => {
+  if (isLoadMore) {
+    setIsLoadingMore(true);
+  } else {
     setLoading(true);
     setError(null);
-    
-    try {
-      logDebug('Fetching weather data for container:', container);
-      
-      const response = await fetch('/api/weather-data', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ containerName: container })
-      });
+  }
 
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
+  try {
+    logDebug('Fetching weather data for container:', container);
 
-      const data = await response.json();
-      
-      // Extract filename from response if available
-      if (data.metadata.blobInfo.name) {
-        setCSVFileName(data.fileName);
-        logDebug('CSV Filename received:', data.metadata.blobInfo.name);
-      }
-      logDebug('Raw API response:', data);
-      
-      if (!data || !data.data || data.data.length === 0) {
+    const currentOffset = isLoadMore ? offset + LIMIT : 0;
+
+    const response = await fetch('/api/weather-data', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        containerName: container,
+        limit: LIMIT,
+        offset: currentOffset
+      })
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    const data = await response.json();
+
+    if (data.metadata.blobInfo.name) {
+      setCSVFileName(data.metadata.blobInfo.name);
+      logDebug('CSV Filename received:', data.metadata.blobInfo.name);
+    }
+
+    logDebug('Raw API response:', data);
+
+    if (!data || !data.data || data.data.length === 0) {
+      if (!isLoadMore) {
         throw new Error('No weather data found');
       }
+      return;
+    }
 
-      // Log first few rows to see the structure
-      logDebug('First 3 data points:', data.data.slice(0, 3));
+    logDebug('First 3 data points:', data.data.slice(0, 3));
 
-      // Process and validate dates
-      const processedData = data.data.map((item: any, index: number) => {
-        logDebug(`Processing item ${index}:`, item);
-        
-        // Try different possible date field names
-        const possibleTimeFields = ['time', 'timestamp', 'date', 'datetime', 'Time', 'Timestamp', 'Date', 'DateTime'];
-        let timeValue = null;
-        
-        for (const field of possibleTimeFields) {
-          if (item[field]) {
-            timeValue = item[field];
-            logDebug(`Found time in field '${field}':`, timeValue);
-            break;
-          }
+    const processedData = data.data.map((item: any, index: number) => {
+      logDebug(`Processing item ${index}:`, item);
+
+      const possibleTimeFields = ['time', 'timestamp', 'date', 'datetime', 'Time', 'Timestamp', 'Date', 'DateTime'];
+      let timeValue = null;
+
+      for (const field of possibleTimeFields) {
+        if (item[field]) {
+          timeValue = item[field];
+          logDebug(`Found time in field '${field}':`, timeValue);
+          break;
         }
+      }
 
-        if (!timeValue) {
-          logDebug('No time field found in item:', Object.keys(item));
-        }
+      if (!timeValue) {
+        logDebug('No time field found in item:', Object.keys(item));
+      }
 
-        const parsedDate = timeValue ? parseDateTime(String(timeValue)) : null;
-        
-        return {
-          ...item,
-          time: parsedDate ? parsedDate.toISOString() : timeValue,
-          _originalTime: timeValue,
-          _parsedDate: parsedDate ? parsedDate.toISOString() : null
-        };
-      });
+      const parsedDate = timeValue ? parseDateTime(String(timeValue)) : null;
 
-      logDebug('Processed data sample:', processedData.slice(0, 3));
+      return {
+        ...item,
+        time: parsedDate ? parsedDate.toISOString() : timeValue,
+        _originalTime: timeValue,
+        _parsedDate: parsedDate ? parsedDate.toISOString() : null
+      };
+    });
 
-      // Sort by date if possible
-      const sortedData = processedData.sort((a: WeatherDataPoint, b: WeatherDataPoint) => {
-        const dateA = a.time ? new Date(a.time).getTime() : 0;
-        const dateB = b.time ? new Date(b.time).getTime() : 0;
-        return dateA - dateB;
-      });
+    logDebug('Processed data sample:', processedData.slice(0, 3));
 
+    const sortedData = processedData.sort((a: WeatherDataPoint, b: WeatherDataPoint) => {
+      const dateA = a.time ? new Date(a.time).getTime() : 0;
+      const dateB = b.time ? new Date(b.time).getTime() : 0;
+      return dateA - dateB;
+    });
+
+    if (isLoadMore) {
+      setWeatherData(prev => [...prev, ...sortedData]);
+      setOffset(currentOffset);
+    } else {
       setWeatherData(sortedData);
-      setLastUpdate(new Date());
-      setLoading(false);
-      
-      logDebug('Data loaded successfully. Total points:', sortedData.length);
-    } catch (err) {
-      console.error('Error fetching weather data:', err);
-      const errorMessage = err instanceof Error ? err.message : 'Failed to fetch weather data';
+      setOffset(currentOffset);
+    }
+
+    setHasMore(data.pagination.hasMore);
+    setLastUpdate(new Date());
+
+    logDebug('Data loaded successfully. Total points:', sortedData.length);
+  } catch (err) {
+    console.error('Error fetching weather data:', err);
+    const errorMessage = err instanceof Error ? err.message : 'Failed to fetch weather data';
+    if (!isLoadMore) {
       setError(errorMessage);
+    }
+  } finally {
+    if (isLoadMore) {
+      setIsLoadingMore(false);
+    } else {
       setLoading(false);
     }
-  };
+  }
+};
 
   const handleBackToSelection = () => {
     window.location.href = '/selection';
@@ -714,28 +745,28 @@ const WeatherDashboard = () => {
     <>
       {sidebarOpen && (
         <div 
-          className="fixed inset-0 bg-black bg-opacity-50 z-40 transition-opacity"
+          className="fixed inset-0 backdrop-blur-sm bg-white/30 z-40 transition-all duration-300"
           onClick={() => setSidebarOpen(false)}
         />
       )}
       
-      <div className={`fixed top-0 left-0 h-full w-64 bg-white shadow-2xl z-50 transform transition-transform duration-300 ease-in-out ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
+      <div className={`fixed top-0 left-0 h-full w-64 bg-gradient-to-b from-blue-600 via-blue-700 to-indigo-800 shadow-2xl z-50 transform transition-transform duration-300 ease-in-out ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
         <div className="flex flex-col h-full">
-          <div className="p-6 border-b border-gray-200 flex items-center justify-between">
+          <div className="p-6 border-b border-blue-500/30 flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <div className="p-2.5 rounded-xl bg-gradient-to-br from-blue-500 to-indigo-600 shadow-md">
+              <div className="p-2.5 rounded-xl bg-white/20 backdrop-blur-sm shadow-md border border-white/30">
                 <Wind className="w-6 h-6 text-white" />
               </div>
               <div>
-                <h2 className="text-base font-bold text-gray-900">Weather</h2>
-                <p className="text-xs text-gray-500">Monitoring</p>
+                <h2 className="text-base font-bold text-white">Weather</h2>
+                <p className="text-xs text-blue-200">Monitoring</p>
               </div>
             </div>
             <button 
               onClick={() => setSidebarOpen(false)}
-              className="p-1.5 rounded-lg hover:bg-gray-100 transition-colors"
+              className="p-1.5 rounded-lg hover:bg-white/10 transition-colors"
             >
-              <X className="w-5 h-5 text-gray-600" />
+              <X className="w-5 h-5 text-white" />
             </button>
           </div>
 
@@ -745,59 +776,51 @@ const WeatherDashboard = () => {
                 setActiveTab('dashboard');
                 setSidebarOpen(false);
               }}
-              className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all font-medium text-sm ${activeTab === 'dashboard' ? 'bg-gradient-to-r from-blue-500 to-indigo-600 text-white shadow-md' : 'text-gray-700 hover:bg-gray-50'}`}
+              className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all font-medium text-sm ${activeTab === 'dashboard' ? 'bg-white/20 text-white shadow-lg border border-white/30 backdrop-blur-sm' : 'text-blue-100 hover:bg-white/10'}`}
             >
               <Home className="w-5 h-5" />
               <span>Dashboard</span>
             </button>
             
-            <button 
-              onClick={() => {
-                setActiveTab('analytics');
-                setSidebarOpen(false);
-              }}
-              className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all font-medium text-sm ${activeTab === 'analytics' ? 'bg-gradient-to-r from-blue-500 to-indigo-600 text-white shadow-md' : 'text-gray-700 hover:bg-gray-50'}`}
-            >
-              <BarChart3 className="w-5 h-5" />
-              <span>Analytics</span>
-            </button>
+            
             
             <button 
               onClick={() => {
                 setActiveTab('history');
                 setSidebarOpen(false);
               }}
-              className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all font-medium text-sm ${activeTab === 'history' ? 'bg-gradient-to-r from-blue-500 to-indigo-600 text-white shadow-md' : 'text-gray-700 hover:bg-gray-50'}`}
+              className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all font-medium text-sm ${activeTab === 'history' ? 'bg-white/20 text-white shadow-lg border border-white/30 backdrop-blur-sm' : 'text-blue-100 hover:bg-white/10'}`}
             >
               <Clock className="w-5 h-5" />
               <span>History</span>
             </button>
 
-            <div className="my-4 border-t border-gray-200"></div>
+            <div className="my-4 border-t border-blue-500/30"></div>
             
             <button 
               onClick={() => setSidebarOpen(false)}
-              className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-gray-700 hover:bg-gray-50 transition-all font-medium text-sm"
+              className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-blue-100 hover:bg-white/10 transition-all font-medium text-sm"
             >
               <Download className="w-5 h-5" />
               <span>Export Data</span>
             </button>
             
-            <button 
-              onClick={() => setSidebarOpen(false)}
-              className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-gray-700 hover:bg-gray-50 transition-all font-medium text-sm"
-            >
-              <Settings className="w-5 h-5" />
-              <span>Settings</span>
-            </button>
+            
           </nav>
 
-          <div className="p-4 border-t border-gray-200">
-            <div className="p-3 bg-gradient-to-br from-blue-50 to-indigo-50 rounded-lg">
-              <p className="text-xs font-semibold text-gray-600 mb-1">Data Source</p>
-              <p className="text-sm font-bold text-gray-800">Azure Storage</p>
-              <p className="text-xs text-gray-500 mt-1">Container: {containerName}</p>
-            </div>
+          {/* Logout Button at Bottom */}
+          <div className="p-4 border-t border-blue-500/30">
+            <button 
+              onClick={() => {
+                fetch('/api/auth/logout', { method: 'POST' }).then(() => {
+                  window.location.href = '/auth/login';
+                });
+              }}
+              className="w-full flex items-center gap-3 px-4 py-3 rounded-xl bg-red-500/20 text-red-200 hover:bg-red-500/30 transition-all font-medium text-sm border border-red-400/30"
+            >
+              <LogOut className="w-5 h-5" />
+              <span>Logout</span>
+            </button>
           </div>
         </div>
       </div>
@@ -814,7 +837,6 @@ const WeatherDashboard = () => {
             <RefreshCw className="w-12 h-12 text-blue-600 absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2" />
           </div>
           <p className="text-2xl font-bold text-gray-700 mb-2">Loading Weather Data</p>
-          <p className="text-gray-500">Fetching from {containerName}...</p>
         </div>
       </div>
     );
@@ -861,7 +883,7 @@ const WeatherDashboard = () => {
       <Sidebar />
       
       <div className="min-h-screen">
-        <header className="sticky top-0 z-30 bg-white border-b border-gray-200 shadow-sm">
+         <header className="sticky top-0 z-30 bg-white border-b border-gray-200 shadow-sm">
           <div className="flex items-center justify-between px-4 py-3">
             <div className="flex items-center gap-3">
               <button 
@@ -879,7 +901,7 @@ const WeatherDashboard = () => {
               </button>
               <div>
                 <h1 className="text-xl font-black text-transparent bg-clip-text bg-gradient-to-r from-blue-600 to-indigo-600">
-                  {stationName}
+                  Home Dashboard
                 </h1>
                 <p className="text-xs text-gray-500 mt-0.5">Real-time environmental monitoring</p>
               </div>
@@ -906,16 +928,26 @@ const WeatherDashboard = () => {
         </header>
 
         <div className="p-4 md:p-6 lg:p-8">
-          <div className="bg-white rounded-2xl shadow-lg p-6 mb-6">
-            <div className="flex items-center gap-3">
-              <div className="p-3 rounded-xl bg-gradient-to-br from-blue-500 to-indigo-600 shadow-md">
-                <Clock className="w-6 h-6 text-white" />
+          <div className="bg-white rounded-2xl shadow-lg p-4 mb-6">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="p-2 rounded-xl bg-gradient-to-br from-blue-500 to-indigo-600 shadow-md">
+                  <Activity className="w-5 h-5 text-white" />
+                </div>
+                <div>
+                  <h2 className="text-lg font-bold text-gray-800">{stationName}</h2>
+                  <p className="text-xs text-gray-500">Weather Station</p>
+                </div>
               </div>
-              <div>
-                <h2 className="text-lg font-bold text-gray-800">Last update :</h2>
-                <p className="text-2xl font-black text-transparent bg-clip-text bg-gradient-to-r from-blue-600 to-indigo-600 mt-1">
-                  {lastReadingTime}
-                </p>
+              
+              <div className="flex items-center gap-2 px-3 py-2 bg-gray-50 rounded-lg border border-gray-200">
+                <Clock className="w-4 h-4 text-gray-600" />
+                <div className="text-left">
+                  <p className="text-xs text-gray-500">Last update</p>
+                  <p className="text-sm font-bold text-transparent bg-clip-text bg-gradient-to-r from-blue-600 to-indigo-600">
+                    {lastReadingTime}
+                  </p>
+                </div>
               </div>
             </div>
           </div>
@@ -1105,67 +1137,68 @@ const WeatherDashboard = () => {
           </div>
 
           <div className="bg-white rounded-2xl shadow-lg overflow-hidden">
-            <div className="p-6 border-b border-gray-200">
-              <div className="flex items-center gap-3">
-                <div className="p-3 rounded-xl bg-gradient-to-br from-gray-600 to-gray-800 shadow-md">
-                  <Activity className="w-5 h-5 text-white" />
-                </div>
-                <h3 className="text-xl font-bold text-gray-800">Historical Data</h3>
-              </div>
-            </div>
-            <div className="overflow-x-auto">
-              <table className="min-w-full divide-y divide-gray-200">
-                <thead className="bg-gray-50">
-                  <tr>
-                    <th className="px-6 py-4 text-left text-xs font-bold text-gray-700 uppercase tracking-wider">Time</th>
-                    <th className="px-6 py-4 text-left text-xs font-bold text-gray-700 uppercase tracking-wider">Temp</th>
-                    <th className="px-6 py-4 text-left text-xs font-bold text-gray-700 uppercase tracking-wider">Humidity</th>
-                    <th className="px-6 py-4 text-left text-xs font-bold text-gray-700 uppercase tracking-wider">S.I</th>
-                    <th className="px-6 py-4 text-left text-xs font-bold text-gray-700 uppercase tracking-wider">Wind</th>
-                    <th className="px-6 py-4 text-left text-xs font-bold text-gray-700 uppercase tracking-wider">Direction</th>
-                    <th className="px-6 py-4 text-left text-xs font-bold text-gray-700 uppercase tracking-wider">Pressure</th>
-                    <th className="px-6 py-4 text-left text-xs font-bold text-gray-700 uppercase tracking-wider">Rain</th>
-                  </tr>
-                </thead>
-                <tbody className="bg-white divide-y divide-gray-200">
-                  {weatherData.slice().reverse().slice(0, showAllData ? weatherData.length : 5).map((row, index) => (
-                    <tr key={index} className="hover:bg-blue-50 transition-colors duration-150">
-                      <td className="px-6 py-4 text-sm font-semibold text-gray-900 whitespace-nowrap">
-                        {row.time ? new Date(row.time).toLocaleString() : row._originalTime || 'N/A'}
-                      </td>
-                      <td className="px-6 py-4 text-sm text-gray-700">{row.tempC}°C</td>
-                      <td className="px-6 py-4 text-sm text-gray-700">{row.humidity}%</td>
-                      <td className="px-6 py-4 text-sm text-gray-700">{row.irradiance} W/m²</td>
-                      <td className="px-6 py-4 text-sm text-gray-700">{row.avgWindSpeed} km/h</td>
-                      <td className="px-6 py-4 text-sm text-gray-700">{row.compassDir || row.direction + '°'}</td>
-                      <td className="px-6 py-4 text-sm text-gray-700">{row.pressure} hPa</td>
-                      <td className="px-6 py-4 text-sm text-gray-700">{row.rainRatePerHour} mm/h</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            {weatherData.length > 5 && (
-              <div className="p-6 border-t border-gray-200 flex justify-center">
-                <button
-                  onClick={() => setShowAllData(!showAllData)}
-                  className="px-6 py-3 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-xl hover:from-blue-700 hover:to-indigo-700 transition-all duration-300 shadow-md hover:shadow-lg font-semibold text-sm flex items-center gap-2"
-                >
-                  {showAllData ? (
-                    <>
-                      <ArrowLeft className="w-4 h-4" />
-                      Show Less
-                    </>
-                  ) : (
-                    <>
-                      Show More ({weatherData.length - 5} more records)
-                      <BarChart3 className="w-4 h-4" />
-                    </>
-                  )}
-                </button>
-              </div>
-            )}
-          </div>
+  <div className="p-6 border-b border-gray-200">
+    <div className="flex items-center gap-3">
+      <div className="p-3 rounded-xl bg-gradient-to-br from-gray-600 to-gray-800 shadow-md">
+        <Activity className="w-5 h-5 text-white" />
+      </div>
+      <h3 className="text-xl font-bold text-gray-800">Historical Data</h3>
+    </div>
+  </div>
+  <div className="overflow-x-auto">
+    <table className="min-w-full divide-y divide-gray-200">
+      <thead className="bg-gray-50">
+        <tr>
+          <th className="px-6 py-4 text-left text-xs font-bold text-gray-700 uppercase tracking-wider">Time</th>
+          <th className="px-6 py-4 text-left text-xs font-bold text-gray-700 uppercase tracking-wider">Temp</th>
+          <th className="px-6 py-4 text-left text-xs font-bold text-gray-700 uppercase tracking-wider">Humidity</th>
+          <th className="px-6 py-4 text-left text-xs font-bold text-gray-700 uppercase tracking-wider">S.I</th>
+          <th className="px-6 py-4 text-left text-xs font-bold text-gray-700 uppercase tracking-wider">Wind</th>
+          <th className="px-6 py-4 text-left text-xs font-bold text-gray-700 uppercase tracking-wider">Direction</th>
+          <th className="px-6 py-4 text-left text-xs font-bold text-gray-700 uppercase tracking-wider">Pressure</th>
+          <th className="px-6 py-4 text-left text-xs font-bold text-gray-700 uppercase tracking-wider">Rain</th>
+        </tr>
+      </thead>
+      <tbody className="bg-white divide-y divide-gray-200">
+        {weatherData.slice().reverse().map((row, index) => (
+          <tr key={index} className="hover:bg-blue-50 transition-colors duration-150">
+            <td className="px-6 py-4 text-sm font-semibold text-gray-900 whitespace-nowrap">
+              {row.time ? new Date(row.time).toLocaleString() : row._originalTime || 'N/A'}
+            </td>
+            <td className="px-6 py-4 text-sm text-gray-700">{row.tempC}°C</td>
+            <td className="px-6 py-4 text-sm text-gray-700">{row.humidity}%</td>
+            <td className="px-6 py-4 text-sm text-gray-700">{row.irradiance} W/m²</td>
+            <td className="px-6 py-4 text-sm text-gray-700">{row.avgWindSpeed} km/h</td>
+            <td className="px-6 py-4 text-sm text-gray-700">{row.compassDir || row.direction + '°'}</td>
+            <td className="px-6 py-4 text-sm text-gray-700">{row.pressure} hPa</td>
+            <td className="px-6 py-4 text-sm text-gray-700">{row.rainRatePerHour} mm/h</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  </div>
+  {hasMore && (
+    <div className="p-6 border-t border-gray-200 flex justify-center">
+      <button
+        onClick={handleLoadMore}
+        disabled={isLoadingMore}
+        className="px-6 py-3 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-xl hover:from-blue-700 hover:to-indigo-700 transition-all duration-300 shadow-md hover:shadow-lg font-semibold text-sm flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+      >
+        {isLoadingMore ? (
+          <>
+            <RefreshCw className="w-4 h-4 animate-spin" />
+            Loading...
+          </>
+        ) : (
+          <>
+            Load More Data
+            <BarChart3 className="w-4 h-4" />
+          </>
+        )}
+      </button>
+    </div>
+  )}
+</div>
         </div>
       </div>
     </div>

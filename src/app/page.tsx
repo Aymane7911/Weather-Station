@@ -45,7 +45,7 @@ export default function HomePage() {
         Your browser does not support the video tag.
       </video>
 
-      {/* Dark Overlay 1 */}
+      {/* Dark Overlay */}
       <div className="absolute inset-0 bg-gradient-to-br from-black/60 via-black/50 to-black/70"></div>
 
       {/* Animated Background Elements */}
@@ -67,23 +67,48 @@ export default function HomePage() {
           <h1 className="text-2xl font-black bg-gradient-to-r from-blue-400 to-cyan-400 bg-clip-text text-transparent">WeatherHub</h1>
         </div>
 
-        {/* Auth Buttons */}
-        <div className="flex items-center gap-3 sm:gap-4">
-          <a
-            href="/auth/login"
-            className="flex items-center gap-2 bg-white/10 hover:bg-white/20 backdrop-blur-md border border-white/30 text-white font-bold py-2 px-4 sm:px-6 rounded-lg transition-all duration-300 hover:shadow-lg"
-          >
-            <LogIn className="w-4 h-4 sm:w-5 sm:h-5" />
-            <span className="hidden sm:inline">Login</span>
-          </a>
+        {/* Navigation Links and Auth Buttons */}
+        <div className="flex items-center gap-3 sm:gap-6">
+          {/* Navigation Links */}
+          <div className="hidden md:flex items-center gap-6">
+            <a
+              href="/products"
+              className="text-white/80 hover:text-white font-semibold transition-colors duration-300"
+            >
+              Our Products
+            </a>
+            <button
+              onClick={handleGetStarted}
+              className="text-white/80 hover:text-white font-semibold transition-colors duration-300"
+            >
+              About
+            </button>
+            <a
+              href="/contact"
+              className="text-white/80 hover:text-white font-semibold transition-colors duration-300"
+            >
+              Contact Us
+            </a>
+          </div>
 
-          <a
-            href="/auth/register"
-            className="flex items-center gap-2 bg-gradient-to-r from-blue-500 to-cyan-500 hover:from-blue-600 hover:to-cyan-600 text-white font-bold py-2 px-4 sm:px-6 rounded-lg shadow-lg hover:shadow-cyan-500/50 transition-all duration-300"
-          >
-            <UserPlus className="w-4 h-4 sm:w-5 sm:h-5" />
-            <span className="hidden sm:inline">Register</span>
-          </a>
+          {/* Auth Buttons */}
+          <div className="flex items-center gap-3">
+            <a
+              href="/auth/login"
+              className="flex items-center gap-2 bg-white/10 hover:bg-white/20 backdrop-blur-md border border-white/30 text-white font-bold py-2 px-4 sm:px-6 rounded-lg transition-all duration-300 hover:shadow-lg"
+            >
+              <LogIn className="w-4 h-4 sm:w-5 sm:h-5" />
+              <span className="hidden sm:inline">Login</span>
+            </a>
+
+            <a
+              href="/auth/register"
+              className="flex items-center gap-2 bg-gradient-to-r from-blue-500 to-cyan-500 hover:from-blue-600 hover:to-cyan-600 text-white font-bold py-2 px-4 sm:px-6 rounded-lg shadow-lg hover:shadow-cyan-500/50 transition-all duration-300"
+            >
+              <UserPlus className="w-4 h-4 sm:w-5 sm:h-5" />
+              <span className="hidden sm:inline">Register</span>
+            </a>
+          </div>
         </div>
       </div>
 
@@ -114,8 +139,6 @@ export default function HomePage() {
               Get Started
               <ArrowRight className="w-5 h-5" />
             </button>
-
-           
           </div>
         ) : (
           /* Info Section */

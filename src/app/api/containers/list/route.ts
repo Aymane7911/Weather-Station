@@ -4,7 +4,7 @@ import { BlobServiceClient } from '@azure/storage-blob';
 
 export async function GET() {
   try {
-    console.log('📡 [API] Fetching list of containers from Azure Storage');
+    console.log('📡 [API] Fetching ALL containers from Azure Storage');
 
     const connectionString = process.env.AZURE_STORAGE_CONNECTION_STRING;
     
@@ -15,22 +15,28 @@ export async function GET() {
     const blobServiceClient = BlobServiceClient.fromConnectionString(connectionString);
     const containers = [];
     
-    // List all containers
+    // Collect all containers at once using Promise-based approach
+    const containerPromises: Promise<any>[] = [];
+    
     for await (const container of blobServiceClient.listContainers({
       includeMetadata: true
     })) {
-      // Filter for weather station containers (starting with 'ws-')
-      // You can modify this filter based on your naming convention
+      // Push all containers that start with 'ws-' into array immediately
       if (container.name.startsWith('ws-')) {
         containers.push({
           name: container.name,
           lastModified: container.properties.lastModified,
-          metadata: container.metadata
+          metadata: container.metadata || {},
+          displayName: container.metadata?.displayName || container.name
         });
       }
     }
 
+    // Sort containers by name for consistent ordering
+    containers.sort((a, b) => a.name.localeCompare(b.name));
+
     console.log(`✅ [API] Found ${containers.length} weather station containers`);
+    console.log(`📋 [API] Container names:`, containers.map(c => c.name));
 
     return NextResponse.json({
       success: true,
@@ -54,13 +60,13 @@ export async function GET() {
   }
 }
 
-// Optional: Add POST endpoint if you need to filter by specific criteria
+// Optional: Add POST endpoint for filtered queries
 export async function POST(request: Request) {
   try {
     const body = await request.json().catch(() => ({}));
     const { prefix = 'ws-', includeAll = false } = body;
 
-    console.log(`📡 [API POST] Fetching containers with prefix: ${prefix}`);
+    console.log(`📡 [API POST] Fetching containers with prefix: ${prefix}, includeAll: ${includeAll}`);
 
     const connectionString = process.env.AZURE_STORAGE_CONNECTION_STRING;
     
@@ -71,7 +77,7 @@ export async function POST(request: Request) {
     const blobServiceClient = BlobServiceClient.fromConnectionString(connectionString);
     const containers = [];
     
-    // List all containers
+    // Fetch all containers in one go
     for await (const container of blobServiceClient.listContainers({
       includeMetadata: true
     })) {
@@ -80,10 +86,14 @@ export async function POST(request: Request) {
         containers.push({
           name: container.name,
           lastModified: container.properties.lastModified,
-          metadata: container.metadata
+          metadata: container.metadata || {},
+          displayName: container.metadata?.displayName || container.name
         });
       }
     }
+
+    // Sort containers by name
+    containers.sort((a, b) => a.name.localeCompare(b.name));
 
     console.log(`✅ [API POST] Found ${containers.length} containers`);
 

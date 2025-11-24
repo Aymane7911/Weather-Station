@@ -1,7 +1,7 @@
 'use client'
 
 import React, { useState, useEffect } from 'react';
-import { Cloud, Edit2, Check, X, Loader2, MapPin, Activity, RefreshCw, Plus, Search, AlertCircle, LogOut, User } from 'lucide-react';
+import { Cloud, Edit2, Check, X, Loader2, MapPin, Activity, RefreshCw, Plus, Search, AlertCircle, LogOut, User, Menu, Wind, Home, Clock, Download, Settings } from 'lucide-react';
 
 interface WeatherStation {
   id: string;
@@ -26,27 +26,14 @@ const WeatherStationSelector = () => {
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [userName, setUserName] = useState<string>('User');
   const [userAccess, setUserAccess] = useState<{
-  hasAccess: boolean;
-  isAdmin: boolean;
-  containers: string[];
-} | null>(null);
-
-// Add this useEffect:
-useEffect(() => {
-  fetchUserAccess();
-}, []);
-
-const fetchUserAccess = async () => {
-  try {
-    const response = await fetch('/api/user/accessible-containers');
-    if (response.ok) {
-      const data = await response.json();
-      setUserAccess(data);
-    }
-  } catch (err) {
-    console.error('Error fetching user access:', err);
-  }
-};
+    hasAccess: boolean;
+    isAdmin: boolean;
+    containers: string[];
+  } | null>(null);
+  const [sidebarOpen, setSidebarOpen] = useState<boolean>(false);
+  const [activeTab, setActiveTab] = useState<string>('dashboard');
+  const [isAdmin, setIsAdmin] = useState<boolean>(false);
+  const [adminCheckLoading, setAdminCheckLoading] = useState<boolean>(true);
 
   const colorGradients = [
     'from-blue-500 to-cyan-500',
@@ -62,7 +49,42 @@ const fetchUserAccess = async () => {
   useEffect(() => {
     fetchContainers();
     fetchUserInfo();
+    fetchUserAccess();
+    checkAdminStatus();
   }, []);
+
+  const checkAdminStatus = async () => {
+    try {
+      setAdminCheckLoading(true);
+      const token = localStorage.getItem('authToken');
+      
+      const response = await fetch('/api/auth/check-admin', {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      
+      const data = await response.json();
+      setIsAdmin(data.isAdmin || false);
+    } catch (error) {
+      console.error('Failed to check admin status:', error);
+      setIsAdmin(false);
+    } finally {
+      setAdminCheckLoading(false);
+    }
+  };
+
+  const fetchUserAccess = async () => {
+    try {
+      const response = await fetch('/api/user/accessible-containers');
+      if (response.ok) {
+        const data = await response.json();
+        setUserAccess(data);
+      }
+    } catch (err) {
+      console.error('Error fetching user access:', err);
+    }
+  };
 
   const fetchUserInfo = async () => {
     try {
@@ -84,7 +106,6 @@ const fetchUserAccess = async () => {
       });
 
       if (response.ok) {
-        // Redirect to login page
         window.location.href = '/auth/login';
       } else {
         throw new Error('Logout failed');
@@ -98,131 +119,124 @@ const fetchUserAccess = async () => {
   };
 
   const fetchContainers = async () => {
-  try {
-    setLoading(true);
-    setError(null);
+    try {
+      setLoading(true);
+      setError(null);
 
-    // First, fetch user access to check permissions
-    const accessResponse = await fetch('/api/user/accessible-containers');
-    if (!accessResponse.ok) {
-      throw new Error('Failed to fetch user access');
-    }
-    
-    const accessData = await accessResponse.json();
-    setUserAccess(accessData);
-
-    // If user doesn't have access, show error and return
-    if (!accessData.hasAccess && !accessData.isAdmin) {
-      setError('You do not have access to any weather stations. Please contact an administrator.');
-      setStations([]);
-      setLoading(false);
-      return;
-    }
-
-    // Fetch list of containers from Azure
-    const response = await fetch('/api/containers/list');
-    
-    if (!response.ok) {
-      throw new Error(`Failed to fetch containers: ${response.status}`);
-    }
-
-    const data = await response.json();
-    
-    if (!data.containers || data.containers.length === 0) {
-      setError('No weather stations found');
-      setStations([]);
-      return;
-    }
-
-    // Filter containers based on user access
-    let allowedContainers = data.containers;
-    
-    if (!accessData.isAdmin) {
-      // If not admin, only show containers in their access list
-      allowedContainers = data.containers.filter((container: any) => 
-        accessData.containers.includes(container.name)
-      );
+      const accessResponse = await fetch('/api/user/accessible-containers');
+      if (!accessResponse.ok) {
+        throw new Error('Failed to fetch user access');
+      }
       
-      if (allowedContainers.length === 0) {
-        setError('You do not have access to any weather stations.');
+      const accessData = await accessResponse.json();
+      setUserAccess(accessData);
+
+      if (!accessData.hasAccess && !accessData.isAdmin) {
+        setError('You do not have access to any weather stations. Please contact an administrator.');
         setStations([]);
         setLoading(false);
         return;
       }
-    }
 
-    // Map containers to weather stations
-    const weatherStations: WeatherStation[] = await Promise.all(
-      allowedContainers.map(async (container: any, index: number) => {
-        try {
-          const blobResponse = await fetch(`/api/weather-data?container=${container.name}`, {
-            method: 'GET'
-          });
+      const response = await fetch('/api/containers/list');
+      
+      if (!response.ok) {
+        throw new Error(`Failed to fetch containers: ${response.status}`);
+      }
 
-          let lastActive = undefined;
-          let blobCount = 0;
-          let status: 'active' | 'inactive' | 'warning' = 'inactive';
+      const data = await response.json();
+      
+      if (!data.containers || data.containers.length === 0) {
+        setError('No weather stations found');
+        setStations([]);
+        return;
+      }
 
-          if (blobResponse.ok) {
-            const blobData = await blobResponse.json();
-            blobCount = blobData.blobCount || 0;
-            
-            if (blobData.blobs && blobData.blobs.length > 0) {
-              const mostRecent = blobData.blobs[0];
-              lastActive = mostRecent.lastModified ? new Date(mostRecent.lastModified) : undefined;
+      let allowedContainers = data.containers;
+      
+      if (!accessData.isAdmin) {
+        allowedContainers = data.containers.filter((container: any) => 
+          accessData.containers.includes(container.name)
+        );
+        
+        if (allowedContainers.length === 0) {
+          setError('You do not have access to any weather stations.');
+          setStations([]);
+          setLoading(false);
+          return;
+        }
+      }
+
+      const weatherStations: WeatherStation[] = await Promise.all(
+        allowedContainers.map(async (container: any, index: number) => {
+          try {
+            const blobResponse = await fetch(`/api/weather-data?container=${container.name}`, {
+              method: 'GET'
+            });
+
+            let lastActive = undefined;
+            let blobCount = 0;
+            let status: 'active' | 'inactive' | 'warning' = 'inactive';
+
+            if (blobResponse.ok) {
+              const blobData = await blobResponse.json();
+              blobCount = blobData.blobCount || 0;
               
-              if (lastActive) {
-                const hoursSinceUpdate = (Date.now() - lastActive.getTime()) / (1000 * 60 * 60);
-                if (hoursSinceUpdate < 1) {
-                  status = 'active';
-                } else if (hoursSinceUpdate < 24) {
-                  status = 'warning';
-                } else {
-                  status = 'inactive';
+              if (blobData.blobs && blobData.blobs.length > 0) {
+                const mostRecent = blobData.blobs[0];
+                lastActive = mostRecent.lastModified ? new Date(mostRecent.lastModified) : undefined;
+                
+                if (lastActive) {
+                  const hoursSinceUpdate = (Date.now() - lastActive.getTime()) / (1000 * 60 * 60);
+                  if (hoursSinceUpdate < 1) {
+                    status = 'active';
+                  } else if (hoursSinceUpdate < 24) {
+                    status = 'warning';
+                  } else {
+                    status = 'inactive';
+                  }
                 }
               }
             }
+
+            const storedName = localStorage.getItem(`station_name_${container.name}`);
+            const displayName = storedName || container.name.replace('ws-', '').replace(/-/g, ' ')
+              .split(' ')
+              .map((word: string) => word.charAt(0).toUpperCase() + word.slice(1))
+              .join(' ') + ' Station';
+
+            return {
+              id: container.name,
+              name: displayName,
+              containerName: container.name,
+              color: colorGradients[index % colorGradients.length],
+              lastActive,
+              status,
+              blobCount
+            };
+          } catch (err) {
+            console.error(`Error fetching data for container ${container.name}:`, err);
+            return {
+              id: container.name,
+              name: container.name,
+              containerName: container.name,
+              color: colorGradients[index % colorGradients.length],
+              status: 'inactive' as const,
+              blobCount: 0
+            };
           }
+        })
+      );
 
-          const storedName = localStorage.getItem(`station_name_${container.name}`);
-          const displayName = storedName || container.name.replace('ws-', '').replace(/-/g, ' ')
-            .split(' ')
-            .map((word: string) => word.charAt(0).toUpperCase() + word.slice(1))
-            .join(' ') + ' Station';
-
-          return {
-            id: container.name,
-            name: displayName,
-            containerName: container.name,
-            color: colorGradients[index % colorGradients.length],
-            lastActive,
-            status,
-            blobCount
-          };
-        } catch (err) {
-          console.error(`Error fetching data for container ${container.name}:`, err);
-          return {
-            id: container.name,
-            name: container.name,
-            containerName: container.name,
-            color: colorGradients[index % colorGradients.length],
-            status: 'inactive' as const,
-            blobCount: 0
-          };
-        }
-      })
-    );
-
-    setStations(weatherStations);
-  } catch (err) {
-    console.error('Error fetching containers:', err);
-    setError(err instanceof Error ? err.message : 'Failed to fetch weather stations');
-  } finally {
-    setLoading(false);
-    setRefreshing(false);
-  }
-};
-
+      setStations(weatherStations);
+    } catch (err) {
+      console.error('Error fetching containers:', err);
+      setError(err instanceof Error ? err.message : 'Failed to fetch weather stations');
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  };
 
   const handleRefresh = () => {
     setRefreshing(true);
@@ -239,10 +253,7 @@ const fetchUserAccess = async () => {
       s.id === id ? { ...s, name: editName } : s
     );
     setStations(updatedStations);
-    
-    // Save to localStorage
     localStorage.setItem(`station_name_${id}`, editName);
-    
     setEditingId(null);
     setEditName('');
   };
@@ -254,12 +265,8 @@ const fetchUserAccess = async () => {
 
   const handleStationClick = (station: WeatherStation) => {
     if (editingId) return;
-    
-    // Store selected station for the dashboard to use
     localStorage.setItem('selected_station', station.containerName);
     localStorage.setItem('selected_station_name', station.name);
-    
-    // Redirect to dashboard with container parameter
     window.location.href = `/dashboard?container=${station.containerName}`;
   };
 
@@ -284,6 +291,95 @@ const fetchUserAccess = async () => {
   const filteredStations = stations.filter(station =>
     station.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
     station.containerName.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+
+  const Sidebar = () => (
+    <>
+      {sidebarOpen && (
+        <div 
+          className="fixed inset-0 backdrop-blur-sm bg-white/30 z-40 transition-all duration-300"
+          onClick={() => setSidebarOpen(false)}
+        />
+      )}
+      
+      <div className={`fixed top-0 left-0 h-full w-64 bg-gradient-to-b from-blue-600 via-blue-700 to-indigo-800 shadow-2xl z-50 transform transition-transform duration-300 ease-in-out ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
+        <div className="flex flex-col h-full">
+          <div className="p-6 border-b border-blue-500/30 flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="p-2.5 rounded-xl bg-white/20 backdrop-blur-sm shadow-md border border-white/30">
+                <Wind className="w-6 h-6 text-white" />
+              </div>
+              <div>
+                <h2 className="text-base font-bold text-white">Weather</h2>
+                <p className="text-xs text-blue-200">Monitoring</p>
+              </div>
+            </div>
+            <button 
+              onClick={() => setSidebarOpen(false)}
+              className="p-1.5 rounded-lg hover:bg-white/10 transition-colors"
+            >
+              <X className="w-5 h-5 text-white" />
+            </button>
+          </div>
+
+          <nav className="flex-1 p-4 space-y-1">
+            <button 
+              onClick={() => {
+                setActiveTab('dashboard');
+                setSidebarOpen(false);
+              }}
+              className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all font-medium text-sm ${activeTab === 'dashboard' ? 'bg-white/20 text-white shadow-lg border border-white/30 backdrop-blur-sm' : 'text-blue-100 hover:bg-white/10'}`}
+            >
+              <Home className="w-5 h-5" />
+              <span>Dashboard</span>
+            </button>
+            
+          
+
+            <div className="my-4 border-t border-blue-500/30"></div>
+            
+            <button 
+              onClick={() => setSidebarOpen(false)}
+              className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-blue-100 hover:bg-white/10 transition-all font-medium text-sm"
+            >
+              <Download className="w-5 h-5" />
+              <span>Export Data</span>
+            </button>
+
+            {!adminCheckLoading && isAdmin && (
+              <>
+                <div className="my-4 border-t border-blue-500/30"></div>
+                
+                <button 
+                  onClick={() => {
+                    window.location.href = '/access';
+                    setSidebarOpen(false);
+                  }}
+                  className="w-full flex items-center gap-3 px-4 py-3 rounded-xl bg-gradient-to-r from-yellow-400/20 to-amber-400/20 text-yellow-100 hover:from-yellow-400/30 hover:to-amber-400/30 transition-all font-medium text-sm border border-yellow-400/30 shadow-md"
+                >
+                  <Settings className="w-5 h-5" />
+                  <span>Admin Panel</span>
+                </button>
+              </>
+            )}
+          </nav>
+
+          <div className="p-4 border-t border-blue-500/30">
+            <button 
+              onClick={() => {
+                fetch('/api/auth/logout', { method: 'POST' }).then(() => {
+                  window.location.href = '/auth/login';
+                });
+              }}
+              className="w-full flex items-center gap-3 px-4 py-3 rounded-xl bg-red-500/20 text-red-200 hover:bg-red-500/30 transition-all font-medium text-sm border border-red-400/30"
+            >
+              <LogOut className="w-5 h-5" />
+              <span>Logout</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </>
   );
 
   if (loading) {
@@ -325,77 +421,52 @@ const fetchUserAccess = async () => {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50">
-      {/* Header */}
-      <header className="bg-white border-b border-gray-200 shadow-sm sticky top-0 z-30">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-          <div className="flex items-center justify-between">
+      <Sidebar />
+      
+      <header className="sticky top-0 z-30 bg-white border-b border-gray-200 shadow-sm">
+        <div className="flex items-center justify-between px-4 py-3">
+          <div className="flex items-center gap-3">
+            <button 
+              onClick={() => setSidebarOpen(!sidebarOpen)}
+              className="p-2 rounded-lg hover:bg-gray-100 transition-colors"
+            >
+              <Menu className="w-5 h-5 text-gray-700" />
+            </button>
             <div>
-              <h1 className="text-3xl font-black text-transparent bg-clip-text bg-gradient-to-r from-blue-600 to-indigo-600">
+              <h1 className="text-xl font-black text-transparent bg-clip-text bg-gradient-to-r from-blue-600 to-indigo-600">
                 Weather Stations
               </h1>
-              <p className="text-sm text-gray-500 mt-1">Select a station to view real-time data</p>
-            </div>
-            
-            <div className="flex items-center gap-3">
-              <button 
-                onClick={handleRefresh}
-                disabled={refreshing}
-                className="flex items-center gap-2 bg-gradient-to-r from-blue-600 to-indigo-600 text-white px-5 py-2.5 rounded-xl hover:from-blue-700 hover:to-indigo-700 transition-all duration-300 shadow-md hover:shadow-lg font-semibold text-sm disabled:opacity-50"
-              >
-                <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
-                Refresh
-              </button>
-
-              {/* User Menu */}
-              <div className="relative">
-                <button
-                  onClick={() => setShowUserMenu(!showUserMenu)}
-                  className="flex items-center gap-2 bg-gray-100 hover:bg-gray-200 text-gray-700 px-4 py-2.5 rounded-xl transition-all duration-300 font-semibold text-sm"
-                >
-                  <User className="w-4 h-4" />
-                  <span className="hidden sm:inline">{userName}</span>
-                </button>
-
-                {/* Dropdown Menu */}
-                {showUserMenu && (
-                  <div className="absolute right-0 mt-2 w-48 bg-white rounded-xl shadow-xl border border-gray-200 py-2 z-50">
-                    <div className="px-4 py-2 border-b border-gray-100">
-                      <p className="text-sm font-semibold text-gray-700">{userName}</p>
-                      <p className="text-xs text-gray-500 mt-0.5">Signed in</p>
-                    </div>
-                    <button
-                      onClick={handleLogout}
-                      disabled={loggingOut}
-                      className="w-full flex items-center gap-3 px-4 py-2.5 text-left text-sm text-red-600 hover:bg-red-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      {loggingOut ? (
-                        <Loader2 className="w-4 h-4 animate-spin" />
-                      ) : (
-                        <LogOut className="w-4 h-4" />
-                      )}
-                      <span>{loggingOut ? 'Logging out...' : 'Logout'}</span>
-                    </button>
-                  </div>
-                )}
-              </div>
+              <p className="text-xs text-gray-500 mt-0.5">Select a station to view real-time data</p>
             </div>
           </div>
-
-          {/* Search Bar */}
-          <div className="mt-6 relative">
-            <Search className="absolute left-4 top-1/2 transform -translate-y-1/2 w-5 h-5 text-black-400" />
+          
+          <div className="flex items-center gap-3">
+            <button 
+              onClick={handleRefresh}
+              disabled={refreshing}
+              className="flex items-center gap-2 bg-gradient-to-r from-blue-600 to-indigo-600 text-white px-4 py-2 rounded-lg hover:from-blue-700 hover:to-indigo-700 transition-all duration-300 shadow-md hover:shadow-lg font-semibold text-sm"
+            >
+              <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
+              <span className="hidden sm:inline">Refresh</span>
+            </button>
+          </div>
+        </div>
+        
+        {/* Search Bar */}
+        <div className="px-4 pb-3">
+          <div className="relative">
+            <Search className="absolute left-4 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" />
             <input
               type="text"
               placeholder="Search weather stations..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-12 pr-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+              className="w-full pl-12 pr-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all text-gray-900 placeholder:text-gray-400"
             />
           </div>
         </div>
       </header>
 
-      {/* Click outside to close menu */}
       {showUserMenu && (
         <div 
           className="fixed inset-0 z-20" 
@@ -403,7 +474,6 @@ const fetchUserAccess = async () => {
         />
       )}
 
-      {/* Main Content */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
         {filteredStations.length === 0 ? (
           <div className="text-center py-20">
@@ -420,14 +490,12 @@ const fetchUserAccess = async () => {
                 onMouseEnter={() => setHoveredId(station.id)}
                 onMouseLeave={() => setHoveredId(null)}
               >
-                {/* Station Circle */}
                 <div
                   onClick={() => handleStationClick(station)}
                   className={`relative bg-white rounded-3xl p-8 shadow-lg hover:shadow-2xl transition-all duration-500 transform hover:-translate-y-2 ${
                     editingId === station.id ? 'ring-4 ring-blue-500' : ''
                   } cursor-pointer`}
                 >
-                  {/* Status Indicator */}
                   <div className="absolute top-4 right-4 flex items-center gap-2">
                     <div className={`w-2.5 h-2.5 rounded-full ${
                       station.status === 'active' ? 'bg-green-500 animate-pulse' :
@@ -436,14 +504,12 @@ const fetchUserAccess = async () => {
                     }`} />
                   </div>
 
-                  {/* Station Icon */}
                   <div className={`w-32 h-32 mx-auto mb-6 rounded-full bg-gradient-to-br ${station.color} flex items-center justify-center shadow-xl transform transition-transform duration-500 ${
                     hoveredId === station.id ? 'scale-110 rotate-6' : 'scale-100'
                   }`}>
                     <Cloud className="w-16 h-16 text-white" />
                   </div>
 
-                  {/* Station Name */}
                   {editingId === station.id ? (
                     <div className="mb-4">
                       <input
@@ -492,9 +558,6 @@ const fetchUserAccess = async () => {
                     </div>
                   )}
 
-                  
-
-                  {/* Stats */}
                   <div className="space-y-2">
                     <div className="flex items-center justify-between text-sm">
                       <span className="text-gray-600">Status:</span>
@@ -502,8 +565,6 @@ const fetchUserAccess = async () => {
                         {getStatusText(station.status)}
                       </span>
                     </div>
-                    
-                    
                     
                     {station.lastActive && (
                       <div className="flex items-center justify-between text-sm">
@@ -518,7 +579,6 @@ const fetchUserAccess = async () => {
                     )}
                   </div>
 
-                  {/* View Button */}
                   <div className="mt-6 pt-4 border-t border-gray-100">
                     <div className={`text-center font-semibold text-sm bg-gradient-to-r ${station.color} bg-clip-text text-transparent`}>
                       Click to view dashboard →

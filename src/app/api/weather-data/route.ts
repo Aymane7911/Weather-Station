@@ -81,10 +81,8 @@ export async function POST(request: NextRequest) {
   try {
     const body = await request.json().catch(() => ({}));
     const containerName = body.containerName || 'ws-tawyeen';
-    const limit = Math.min(body.limit || 100, 200); // Increased default limit to 100, max 200
-    const offset = body.offset || 0;
 
-    console.log(`📡 [API] Fetching weather data - Container: ${containerName}, Limit: ${limit}, Offset: ${offset}`);
+    console.log(`📡 [API] Fetching ALL weather data - Container: ${containerName}`);
 
     const blobCacheKey = `${containerName}-list`;
     let blobs = getFromCache(blobListCache, blobCacheKey);
@@ -129,15 +127,14 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    console.log(`📋 [API] Total CSV files: ${weatherBlobs.length}, Processing ${Math.min(limit, weatherBlobs.length - offset)}`);
+    console.log(`📋 [API] Total CSV files: ${weatherBlobs.length}, Processing ALL files`);
 
-    // Paginated blob selection
-    const paginatedBlobs = weatherBlobs.slice(offset, offset + limit);
+    // Process ALL blobs (no pagination)
     const allDataWithTimestamps: ParsedWeatherData[] = [];
     const azureService = new AzureBlobService(containerName);
 
     // Parallel processing with Promise.all for faster execution
-    const processingPromises = paginatedBlobs.map(async (blob: BlobItem) => {
+    const processingPromises = weatherBlobs.map(async (blob: BlobItem) => {
       try {
         const dataCacheKey = `${containerName}-${blob.name}`;
         
@@ -197,7 +194,7 @@ export async function POST(request: NextRequest) {
       new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
     );
 
-    console.log(`✅ [API] Successfully processed ${validResults.length} data points`);
+    console.log(`✅ [API] Successfully processed ${validResults.length} data points (ALL DATA)`);
 
     const headers = Object.keys(validResults[0] || {}).filter(k =>
       !['time', 'timestamp', 'fullDateTime', 'blobName'].includes(k)
@@ -207,10 +204,8 @@ export async function POST(request: NextRequest) {
       success: true,
       data: validResults,
       pagination: {
-        offset,
-        limit,
         total: weatherBlobs.length,
-        hasMore: offset + limit < weatherBlobs.length
+        hasMore: false // Always false since we're fetching all data
       },
       metadata: {
         totalRows: validResults.length,

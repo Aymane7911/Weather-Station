@@ -50,12 +50,16 @@ export default function LoginPage() {
       </div>
 
       <div className="max-w-md w-full relative z-10">
-        {/* Logo */}
-        <div className="flex justify-center mb-8 animate-fade-in">
-          <div className="p-4 bg-gradient-to-br from-blue-400 to-cyan-400 rounded-2xl shadow-2xl hover:shadow-cyan-500/50 transition-all duration-300">
+        {/* Logo - Now clickable */}
+        <a 
+          href="/" 
+          className="flex justify-center mb-8 animate-fade-in group"
+          title="Go to Home"
+        >
+          <div className="p-4 bg-gradient-to-br from-blue-400 to-cyan-400 rounded-2xl shadow-2xl hover:shadow-cyan-500/50 transition-all duration-300 transform group-hover:scale-105 cursor-pointer">
             <Cloud className="w-8 h-8 text-white" />
           </div>
-        </div>
+        </a>
 
         {/* Main card */}
         <div className="bg-white/10 backdrop-blur-2xl border border-white/20 rounded-3xl shadow-2xl p-8 hover:shadow-2xl hover:border-white/30 transition-all duration-300">

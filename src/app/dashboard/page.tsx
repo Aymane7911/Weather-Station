@@ -587,12 +587,22 @@ useEffect(() => {
   tickFormatter={(value: any) => formatXAxisDate(value, timeFilter)}
 />
           <YAxis 
-            stroke="#9ca3af"
-            style={{ fontSize: '11px', fontWeight: '500' }}
-            tick={{ fill: '#6b7280' }}
-            tickMargin={8}
-            width={50}
-          />
+  stroke="#9ca3af"
+  style={{ fontSize: '11px', fontWeight: '500' }}
+  tick={{ fill: '#6b7280' }}
+  tickMargin={8}
+  width={50}
+  label={{ 
+    value: unit, 
+    angle: -90, 
+    position: 'insideLeft', 
+    style: { 
+      fill: '#6b7280', 
+      fontWeight: 'bold', 
+      fontSize: '12px' 
+    } 
+  }}
+/>
           <Tooltip 
             contentStyle={{ 
               backgroundColor: 'rgba(255, 255, 255, 0.98)', 

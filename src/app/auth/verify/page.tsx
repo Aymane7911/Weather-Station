@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useEffect, useState, Suspense } from 'react';
+import React, { useEffect, useState, useRef, Suspense } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { CheckCircle, XCircle, Loader2 } from 'lucide-react';
@@ -10,14 +10,20 @@ function VerifyContent() {
   const token = searchParams.get('token');
   const [status, setStatus] = useState<'loading' | 'success' | 'error'>('loading');
   const [message, setMessage] = useState('');
+  const hasVerified = useRef(false); // Prevent duplicate calls
 
   useEffect(() => {
     const verifyEmail = async () => {
+      // Guard against duplicate calls
+      if (hasVerified.current) return;
+      
       if (!token) {
         setStatus('error');
         setMessage('Invalid verification link');
         return;
       }
+
+      hasVerified.current = true; // Mark as verified before the call
 
       try {
         const response = await fetch(`/api/auth/verify?token=${token}`);

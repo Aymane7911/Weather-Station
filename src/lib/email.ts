@@ -43,7 +43,7 @@ export async function sendVerificationEmail(email: string, token: string) {
       <body>
         <div class="container">
           <div class="header">
-            <h1>🐪 Camel Racing Analytics</h1>
+            <h1>WeatherHub</h1>
           </div>
           <div class="content">
             <h2>Verify Your Email Address</h2>
@@ -57,7 +57,7 @@ export async function sendVerificationEmail(email: string, token: string) {
             <p style="color: #999; font-size: 14px;">If you didn't create an account, you can safely ignore this email.</p>
           </div>
           <div class="footer">
-            <p>&copy; ${new Date().getFullYear()} Camel Racing Analytics. All rights reserved.</p>
+            <p>&copy; ${new Date().getFullYear()} WeatherHub. All rights reserved.</p>
           </div>
         </div>
       </body>
@@ -68,7 +68,7 @@ export async function sendVerificationEmail(email: string, token: string) {
     const info = await transporter.sendMail({
       from: process.env.EMAIL_FROM || process.env.EMAIL_USER || process.env.SMTP_USER,
       to: email,
-      subject: 'Verify your email - Camel Racing Analytics',
+      subject: 'Verify your email - WeatherHub',
       html: htmlContent,
     });
     console.log('✅ Verification email sent to:', email, 'MessageID:', info.messageId);
@@ -98,7 +98,7 @@ export async function sendPasswordResetEmail(email: string, token: string) {
       <body>
         <div class="container">
           <div class="header">
-            <h1>🐪 Camel Racing Analytics</h1>
+            <h1>WeatherHub</h1>
           </div>
           <div class="content">
             <h2>Reset Your Password</h2>
@@ -112,7 +112,7 @@ export async function sendPasswordResetEmail(email: string, token: string) {
             <p style="color: #999; font-size: 14px;">If you didn't request a password reset, you can safely ignore this email.</p>
           </div>
           <div class="footer">
-            <p>&copy; ${new Date().getFullYear()} Camel Racing Analytics. All rights reserved.</p>
+            <p>&copy; ${new Date().getFullYear()} WeatherHub. All rights reserved.</p>
           </div>
         </div>
       </body>
@@ -123,7 +123,7 @@ export async function sendPasswordResetEmail(email: string, token: string) {
     const info = await transporter.sendMail({
       from: process.env.EMAIL_FROM || process.env.EMAIL_USER || process.env.SMTP_USER,
       to: email,
-      subject: 'Reset your password - Camel Racing Analytics',
+      subject: 'Reset your password - WeatherHub',
       html: htmlContent,
     });
     console.log('✅ Password reset email sent to:', email, 'MessageID:', info.messageId);

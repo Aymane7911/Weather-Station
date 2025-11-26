@@ -47,6 +47,10 @@ export default function RegisterPage() {
       }
 
       setSuccess(true);
+      // Redirect to login after 2 seconds
+      setTimeout(() => {
+        router.push('/auth/login');
+      }, 2000);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Registration failed');
     } finally {
@@ -68,10 +72,9 @@ export default function RegisterPage() {
             <div className="w-20 h-20 bg-gradient-to-br from-green-400 to-emerald-600 rounded-full flex items-center justify-center mx-auto mb-6 shadow-xl">
               <CheckCircle className="w-12 h-12 text-white" />
             </div>
-            <h2 className="text-3xl font-bold text-white mb-3">Almost There!</h2>
+            <h2 className="text-3xl font-bold text-white mb-3">Registration Successful!</h2>
             <p className="text-gray-300 mb-8">
-              We've sent a verification link to <span className="text-blue-400 font-semibold">{formData.email}</span>. 
-              Please check your inbox and click the link to verify your account.
+              Your account has been created successfully. You can now log in to access your dashboard.
             </p>
             <Link
               href="/auth/login"
@@ -80,6 +83,7 @@ export default function RegisterPage() {
               Go to Login
               <ArrowRight className="w-4 h-4" />
             </Link>
+            <p className="text-gray-400 text-sm mt-4">Redirecting automatically...</p>
           </div>
         </div>
       </div>
@@ -115,7 +119,7 @@ export default function RegisterPage() {
             </div>
           )}
 
-          <form onSubmit={handleSubmit} className="space-y-5">
+          <div className="space-y-5">
             <div>
               <label className="block text-sm font-semibold text-gray-200 mb-2">
                 Full Name
@@ -187,7 +191,7 @@ export default function RegisterPage() {
             </div>
 
             <button
-              type="submit"
+              onClick={handleSubmit}
               disabled={loading}
               className="w-full bg-gradient-to-r from-blue-500 to-cyan-500 hover:from-blue-600 hover:to-cyan-600 text-white font-bold py-3 rounded-xl transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 shadow-lg hover:shadow-cyan-500/50 transform hover:-translate-y-0.5"
             >
@@ -203,7 +207,7 @@ export default function RegisterPage() {
                 </>
               )}
             </button>
-          </form>
+          </div>
 
           <div className="mt-8 pt-6 border-t border-white/10">
             <p className="text-center text-sm text-gray-300">

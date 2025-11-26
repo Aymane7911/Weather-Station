@@ -1,8 +1,7 @@
 // app/api/auth/register/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { hashPassword, generateToken } from '@/lib/auth';
-import { sendVerificationEmail } from '@/lib/email';
+import { hashPassword } from '@/lib/auth';
 import { z } from 'zod';
 
 const registerSchema = z.object({
@@ -42,45 +41,21 @@ export async function POST(request: NextRequest) {
     // Hash password
     const hashedPassword = await hashPassword(password);
 
-    // Generate verification token
-    const verificationToken = generateToken();
-    const tokenExpiry = new Date();
-    tokenExpiry.setHours(tokenExpiry.getHours() + 24); // 24 hours
-
-    // Create user with isAccessGranted explicitly set to false
+    // Create user with email verified set to true
     const user = await prisma.user.create({
       data: {
         email,
         password: hashedPassword,
         name,
-        verificationToken,
-        emailVerified: false,
-        isAccessGranted: false, // NEW: Explicitly deny access until admin grants it
-        isAdmin: false, // NEW: Users are not admins by default
+        emailVerified: true, // Set to true by default
+        isAccessGranted: false, // Still requires admin approval
+        isAdmin: false,
       },
     });
-
-    // Create verification token record
-    await prisma.verificationToken.create({
-      data: {
-        email,
-        token: verificationToken,
-        expiresAt: tokenExpiry,
-      },
-    });
-
-    // Send verification email
-    try {
-      await sendVerificationEmail(email, verificationToken);
-      console.log('✅ Verification email sent successfully to:', email);
-    } catch (emailError) {
-      console.error('❌ Failed to send verification email:', emailError);
-      // Don't fail registration if email fails - user can request resend
-    }
 
     return NextResponse.json(
       {
-        message: 'Registration successful! Please check your email to verify your account.',
+        message: 'Registration successful! Please proceed to login.',
         userId: user.id,
       },
       { status: 201 }

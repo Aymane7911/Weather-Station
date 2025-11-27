@@ -660,14 +660,14 @@ const getOptimalDataSampling = (data: WeatherDataPoint[], filter: string): Weath
             formatter={(value: any) => [`${value} ${unit}`, title]}
           />
           <Area 
-            type="monotone" 
-            dataKey={dataKey} 
-            stroke={color} 
-            strokeWidth={3}
-            fill={`url(#gradient-${dataKey})`}
-            dot={false}
-            activeDot={{ r: 6, strokeWidth: 3, stroke: '#fff' }}
-          />
+  type="monotone" 
+  dataKey={dataKey} 
+  stroke={color} 
+  strokeWidth={3}
+  fill={`url(#gradient-${dataKey})`}
+  dot={timeFilter === '1h' || timeFilter === '6h' ? { fill: color, r: 4, strokeWidth: 2, stroke: '#fff' } : false}
+  activeDot={{ r: 6, strokeWidth: 3, stroke: '#fff' }}
+/>
         </AreaChart>
       </ResponsiveContainer>
     </div>

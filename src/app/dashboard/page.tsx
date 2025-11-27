@@ -346,14 +346,11 @@ useEffect(() => {
     window.location.href = '/selection';
   };
 
-  const formatXAxisDate = (dateString: string, filter: string, index?: number, dayChangePositions?: Set<number>) => {
-  logDebug('Formatting X-axis date:', { dateString, filter, index });
-  
+  const formatXAxisDate = (dateString: string, filter: string) => {
   if (!dateString) return '';
   
   // Check if this is a time-only value (incomplete datetime)
   if (/^\d{1,2}:\d{2}(?:\s?(?:AM|PM|am|pm))?$/.test(dateString)) {
-    logDebug('Time-only value detected, skipping:', dateString);
     return '';
   }
   
@@ -361,83 +358,119 @@ useEffect(() => {
   
   // If date is invalid, return empty string
   if (isNaN(date.getTime())) {
-    logDebug('Invalid date for X-axis, returning empty:', dateString);
     return '';
   }
   
-  if (filter === '1h' || filter === '6h' || filter === '24h') {
-    // Show time only for short durations
+  if (filter === '1h' || filter === '6h') {
+    // Show time with seconds for very short durations
     return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
-  } else if (filter === 'all' || filter === '7d' || filter === '30d') {
-    // For longer ranges, only show date at day boundaries
-    if (dayChangePositions && index !== undefined) {
-      if (dayChangePositions.has(index)) {
-        return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-      }
-      return ''; // Don't show date if it's not a day boundary
-    }
+  } else if (filter === '24h') {
+    // Show time without seconds for 24h
+    return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+  } else if (filter === '7d') {
+    // Show date and abbreviated time for 7 days
     return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-  } else {
+  } else if (filter === '30d' || filter === 'all') {
+    // Show only date for long ranges
     return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
   }
+  
+  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 };
-  const getDayChangePositions = (data: WeatherDataPoint[]): Set<number> => {
-    const dayChanges = new Set<number>();
-    let lastDate = '';
-    
-    data.forEach((item, index) => {
-      if (!item.time) return;
-      
-      const date = new Date(item.time);
-      const currentDate = date.toLocaleDateString('en-US', { 
-        month: 'short', 
-        day: 'numeric' 
-      });
-      
-      // If date changed or it's the first item, mark it
-      if (currentDate !== lastDate || index === 0) {
-        dayChanges.add(index);
-        lastDate = currentDate;
-      }
-    });
-    
-    return dayChanges;
-  };
+
+const getOptimalDataSampling = (data: WeatherDataPoint[], filter: string): WeatherDataPoint[] => {
+  if (!data || data.length === 0) return [];
+  
+  // For short time ranges, show all data
+  if (filter === '1h' || filter === '6h' || filter === '24h') {
+    return data;
+  }
+  
+  // For longer ranges, intelligently sample the data
+  let sampleRate = 1;
+  
+  if (filter === '7d' && data.length > 100) {
+    sampleRate = Math.ceil(data.length / 100);
+  } else if (filter === '30d' && data.length > 150) {
+    sampleRate = Math.ceil(data.length / 150);
+  } else if (filter === 'all' && data.length > 200) {
+    sampleRate = Math.ceil(data.length / 200);
+  }
+  
+  // Always include the first and last points
+  if (sampleRate === 1) return data;
+  
+  const sampledData = [];
+  sampledData.push(data[0]); // First point
+  
+  for (let i = sampleRate; i < data.length - 1; i += sampleRate) {
+    sampledData.push(data[i]);
+  }
+  
+  sampledData.push(data[data.length - 1]); // Last point
+  
+  return sampledData;
+};
+  
 
   const getFilteredData = () => {
-    if (!weatherData || weatherData.length === 0) return [];
-    
-    const now = new Date();
-    let cutoffTime: Date;
-    
-    switch (timeFilter) {
-      case '1h':
-        cutoffTime = new Date(now.getTime() - 60 * 60 * 1000);
-        break;
-      case '6h':
-        cutoffTime = new Date(now.getTime() - 6 * 60 * 60 * 1000);
-        break;
-      case '24h':
-        cutoffTime = new Date(now.getTime() - 24 * 60 * 60 * 1000);
-        break;
-      case '7d':
-        cutoffTime = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-        break;
-      case '30d':
-        cutoffTime = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-        break;
-      case 'all':
-        return weatherData;
-      default:
-        return weatherData;
-    }
-    
-    return weatherData.filter(item => {
-      if (!item.time) return true;
-      const itemTime = new Date(item.time);
-      return itemTime >= cutoffTime;
-    });
-  };
+  if (!weatherData || weatherData.length === 0) return [];
+  
+  const now = new Date();
+  let cutoffTime: Date;
+  let filtered: WeatherDataPoint[];
+  
+  switch (timeFilter) {
+    case '1h':
+      cutoffTime = new Date(now.getTime() - 60 * 60 * 1000);
+      filtered = weatherData.filter(item => {
+        if (!item.time) return true;
+        const itemTime = new Date(item.time);
+        return itemTime >= cutoffTime;
+      });
+      break;
+    case '6h':
+      cutoffTime = new Date(now.getTime() - 6 * 60 * 60 * 1000);
+      filtered = weatherData.filter(item => {
+        if (!item.time) return true;
+        const itemTime = new Date(item.time);
+        return itemTime >= cutoffTime;
+      });
+      break;
+    case '24h':
+      cutoffTime = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+      filtered = weatherData.filter(item => {
+        if (!item.time) return true;
+        const itemTime = new Date(item.time);
+        return itemTime >= cutoffTime;
+      });
+      break;
+    case '7d':
+      cutoffTime = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+      filtered = weatherData.filter(item => {
+        if (!item.time) return true;
+        const itemTime = new Date(item.time);
+        return itemTime >= cutoffTime;
+      });
+      break;
+    case '30d':
+      cutoffTime = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+      filtered = weatherData.filter(item => {
+        if (!item.time) return true;
+        const itemTime = new Date(item.time);
+        return itemTime >= cutoffTime;
+      });
+      break;
+    case 'all':
+      filtered = weatherData;
+      break;
+    default:
+      filtered = weatherData;
+  }
+  
+  // Apply intelligent data sampling for better visualization
+  return getOptimalDataSampling(filtered, timeFilter);
+};
 
   const WindCompass = ({ direction, size = 140 }: { direction: number; size?: number }) => {
     const arrowLength = size * 0.35;
@@ -583,7 +616,8 @@ useEffect(() => {
   style={{ fontSize: '11px', fontWeight: '500' }}
   tick={{ fill: '#6b7280' }}
   tickMargin={8}
-  interval={Math.ceil(data.length / 8) - 1}
+  interval="preserveStartEnd"
+  minTickGap={50}
   tickFormatter={(value: any) => formatXAxisDate(value, timeFilter)}
 />
           <YAxis 
@@ -631,7 +665,7 @@ useEffect(() => {
             stroke={color} 
             strokeWidth={3}
             fill={`url(#gradient-${dataKey})`}
-            dot={{ fill: color, r: 4, strokeWidth: 2, stroke: '#fff' }}
+            dot={false}
             activeDot={{ r: 6, strokeWidth: 3, stroke: '#fff' }}
           />
         </AreaChart>
@@ -641,12 +675,25 @@ useEffect(() => {
 
   const WindSpeedWithDirectionChart = ({ data }: any) => {
     const CustomizedDot = (props: any) => {
-      const { cx, cy, payload, index } = props;
-      const direction = payload.direction || 0;
-      
-      if (index % 2 !== 0) {
-        return <circle cx={cx} cy={cy} r="4" fill="#3b82f6" stroke="#fff" strokeWidth="2" />;
-      }
+  const { cx, cy, payload, index } = props;
+  const direction = payload.direction || 0;
+  
+  const dataLength = data.length;
+  let displayInterval = 1;
+  
+  if (dataLength > 200) {
+    displayInterval = Math.ceil(dataLength / 15);
+  } else if (dataLength > 100) {
+    displayInterval = Math.ceil(dataLength / 20);
+  } else if (dataLength > 50) {
+    displayInterval = Math.ceil(dataLength / 25);
+  } else {
+    displayInterval = Math.ceil(dataLength / 30);
+  }
+  
+  if (index % displayInterval !== 0) {
+    return null;
+  }
       
       return (
         <g transform={`translate(${cx},${cy})`}>
@@ -683,13 +730,14 @@ useEffect(() => {
               </linearGradient>
             </defs>
             <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" opacity={0.5} />
-            <XAxis 
+           <XAxis 
   dataKey="time" 
   stroke="#9ca3af"
   style={{ fontSize: '11px', fontWeight: '500' }}
   tick={{ fill: '#6b7280' }}
   tickMargin={8}
-  interval={Math.ceil(data.length / 8) - 1}
+  interval="preserveStartEnd"
+  minTickGap={50}
   tickFormatter={(value: any) => formatXAxisDate(value, timeFilter)}
 />
             <YAxis 

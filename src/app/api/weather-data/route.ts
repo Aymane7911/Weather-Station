@@ -50,24 +50,28 @@ async function parseCSVFast(csvContent: string): Promise<ParsedWeatherData | nul
       delimiter: '',
       fastMode: true, // Enable fast mode if available
       transform: (value: string, field: string | number) => {
-        if (typeof value !== 'string') return value;
-        value = value.trim();
-        
-        if (!value || value.toLowerCase() === 'null' || value.toLowerCase() === 'n/a') {
-          return null;
-        }
-        
-        // Only parse numbers for specific fields
-        const numericFields = ['tempC', 'humidity', 'pressure', 'irradiance', 'avgWindSpeed', 'rainRatePerHour', 'direction'];
-        if (numericFields.includes(String(field))) {
-          const num = parseFloat(value);
-          if (!isNaN(num) && isFinite(num)) {
-            return num;
-          }
-        }
-        
-        return value;
+  if (typeof value !== 'string') return value;
+  value = value.trim();
+  
+  if (!value || value.toLowerCase() === 'null' || value.toLowerCase() === 'n/a') {
+    return null;
+  }
+  
+  // Only parse numbers for specific fields
+  const numericFields = ['tempC', 'humidity', 'pressure', 'irradiance', 'avgWindSpeed', 'rainRatePerHour', 'direction'];
+  if (numericFields.includes(String(field))) {
+    const num = parseFloat(value);
+    if (!isNaN(num) && isFinite(num)) {
+      // ADD THIS: Apply +92 offset to pressure values
+      if (String(field) === 'pressure') {
+        return num + 92;
       }
+      return num;
+    }
+  }
+  
+  return value;
+}
     });
 
     return parsed.data?.[0] || null;

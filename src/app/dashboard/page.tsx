@@ -83,6 +83,8 @@ const WeatherDashboard = () => {
   const [showAllData, setShowAllData] = useState<boolean>(false);
   const [isAdmin, setIsAdmin] = useState<boolean>(false);
   const [adminCheckLoading, setAdminCheckLoading] = useState<boolean>(true);
+  const [connectionIndex, setConnectionIndex] = useState<0 | 1 | 2>(0);
+
 
   // ← NEW: Open-Meteo rain lookup map
   const [rainMap, setRainMap] = useState<Map<string, number>>(new Map());
@@ -140,12 +142,15 @@ const WeatherDashboard = () => {
     const urlContainer = urlParams.get('container');
     const storedContainer = localStorage.getItem('selected_station');
     const storedName = localStorage.getItem('selected_station_name');
+    const storedIndex      = localStorage.getItem('selected_connection_index');
     const selectedContainer = urlContainer || storedContainer || 'ws-tawyeen';
     const selectedName = storedName || selectedContainer;
+    const selectedIndex     = (storedIndex ? parseInt(storedIndex) : 0) as 0 | 1 | 2;
     setContainerName(selectedContainer);
     setStationName(selectedName);
-    fetchWeatherData(selectedContainer);
-    const interval = setInterval(() => fetchWeatherData(selectedContainer), 5 * 60 * 1000);
+    setConnectionIndex(selectedIndex);
+    fetchWeatherData(selectedContainer, selectedIndex); 
+    const interval = setInterval(() => fetchWeatherData(selectedContainer, selectedIndex), 5 * 60 * 1000);
     return () => clearInterval(interval);
   }, []);
 
@@ -243,7 +248,7 @@ const WeatherDashboard = () => {
 
   useEffect(() => { document.title = 'Weather Dashboard'; }, []);
 
-  const fetchWeatherData = async (container: string) => {
+  const fetchWeatherData = async (container: string, connIndex: 0 | 1 | 2 = 0) => {
     setLoading(true);
     setError(null);
     try {
@@ -705,7 +710,7 @@ const WeatherDashboard = () => {
               <button onClick={() => setDarkMode(!dm)} className={`p-2 rounded-lg transition-colors ${dm ? 'hover:bg-gray-800 text-yellow-400' : 'hover:bg-gray-100 text-gray-600'}`}>
                 {dm ? <SunMedium className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
               </button>
-              <button onClick={() => fetchWeatherData(containerName)} className="flex items-center gap-2 bg-gradient-to-r from-sky-500 to-blue-600 text-white px-4 py-2 rounded-lg hover:from-sky-600 hover:to-blue-700 transition-all shadow-md hover:shadow-lg font-semibold text-xs">
+              <button onClick={() => fetchWeatherData(containerName, connectionIndex)} className="flex items-center gap-2 bg-gradient-to-r from-sky-500 to-blue-600 text-white px-4 py-2 rounded-lg hover:from-sky-600 hover:to-blue-700 transition-all shadow-md hover:shadow-lg font-semibold text-xs">
                 <RefreshCw className="w-3.5 h-3.5" />
                 <span className="hidden sm:inline">Refresh</span>
               </button>

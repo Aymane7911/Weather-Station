@@ -14,6 +14,7 @@ interface WeatherStation {
   blobCount?: number;
   lat?: number;
   lng?: number;
+  connectionIndex: 0 | 1 | 2;
 }
 
 const colorGradients = [
@@ -280,6 +281,7 @@ useEffect(() => {
           blobCount: 0,
           lat: loc.lat,
           lng: loc.lng,
+          connectionIndex: (container.connectionIndex ?? 0) as 0 | 1 | 2,
         };
       });
       setStations(weatherStations);
@@ -290,7 +292,7 @@ useEffect(() => {
           const res = await fetch('/api/weather-data', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ containerName: container.name, latestOnly: true }),
+            body: JSON.stringify({ containerName: container.name,connectionIndex: container.connectionIndex ?? 0,  latestOnly: true }),
           });
           if (!res.ok) return;
           const d = await res.json();
@@ -325,6 +327,7 @@ useEffect(() => {
     if (editingId) return;
     localStorage.setItem('selected_station', station.containerName);
     localStorage.setItem('selected_station_name', station.name);
+    localStorage.setItem('selected_connection_index',   String(station.connectionIndex));
     window.location.href = `/dashboard?container=${station.containerName}`;
   };
 

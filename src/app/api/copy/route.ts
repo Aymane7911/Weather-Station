@@ -4,7 +4,7 @@ import { AzureBlobService } from '@/lib/azure';
 
 // SOURCE:      aqs-frc      → AZURE_STORAGE_CONNECTION_STRING1 (index 1)
 // DESTINATION: weather      → AZURE_STORAGE_CONNECTION_STRING2 (index 2)
-const SOURCE_CONTAINER = 'ws-tawyeen';
+const SOURCE_CONTAINER = 'ws-fpo';
 const DEST_CONTAINER   = 'weather';
 
 async function runCopy(): Promise<NextResponse> {

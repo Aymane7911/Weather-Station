@@ -2,8 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { AzureBlobService } from '@/lib/azure';
 import { csvParser } from '@/lib/csvParser';
 
-// SOURCE:      aqs-frc  → AZURE_STORAGE_CONNECTION_STRING1 (index 1)
-// DESTINATION: weather  → AZURE_STORAGE_CONNECTION_STRING2 (index 2)
+// SOURCE:      aqs-frc → AZURE_STORAGE_CONNECTION_STRING1 (index 1)
+// DESTINATION: weather → AZURE_STORAGE_CONNECTION_STRING2 (index 2)
 const SOURCE_CONTAINER = 'aqs-frc';
 const DEST_CONTAINER   = 'weather';
 
@@ -20,48 +20,92 @@ function decodeBody(base64: string): any {
 }
 
 /**
- * Parse a JSON blob from aqs-frc (IoT Hub format)
+ * Safely parse potentially concatenated JSON objects.
+ * IoT Hub sometimes writes multiple events into one blob file like:
+ * {"event1"...}{"event2"...}
+ * This function extracts all valid JSON objects from the content.
  */
-function parseJsonBlob(content: string, blobName: string, lastModified: Date): any | null {
-  try {
-    const raw = JSON.parse(content);
+function extractJsonObjects(content: string): any[] {
+  const results: any[] = [];
+  let depth = 0;
+  let start = -1;
 
-    const body = decodeBody(raw.Body);
-    if (!body) {
-      console.warn(`⚠️ Could not decode Body for ${blobName}`);
-      return null;
+  for (let i = 0; i < content.length; i++) {
+    if (content[i] === '{') {
+      if (depth === 0) start = i;
+      depth++;
+    } else if (content[i] === '}') {
+      depth--;
+      if (depth === 0 && start !== -1) {
+        try {
+          const obj = JSON.parse(content.slice(start, i + 1));
+          results.push(obj);
+        } catch {
+          // skip malformed object
+        }
+        start = -1;
+      }
+    }
+  }
+
+  return results;
+}
+
+/**
+ * Parse a JSON blob from aqs-frc (IoT Hub format)
+ * Handles single or concatenated JSON objects in one blob
+ */
+function parseJsonBlob(content: string, blobName: string, lastModified: Date): any[] {
+  try {
+    const rawObjects = extractJsonObjects(content);
+
+    if (rawObjects.length === 0) {
+      console.warn(`⚠️ No valid JSON objects found in ${blobName}`);
+      return [];
     }
 
-    return {
-      tempC:         body.temperature   ?? null,
-      humidity:      body.humidity      ?? null,
-      pressure:      body.pressure      ?? null,
-      latitude:      body.latitude      ?? null,
-      longitude:     body.longitude     ?? null,
-      altitude:      body.altitude      ?? null,
-      irradiance:    null,
-      avgWindSpeed:  null,
-      direction:     null,
-      compassDir:    null,
-      rainRatePerHour: null,
-      time: body.timestamp
-        ? new Date(body.timestamp).toISOString()
-        : raw.EnqueuedTimeUtc
-        ? new Date(raw.EnqueuedTimeUtc).toISOString()
-        : new Date(lastModified).toISOString(),
-      blobName,
-      source: 'iot-hub-json'
-    };
+    const results: any[] = [];
+
+    for (const raw of rawObjects) {
+      const body = decodeBody(raw.Body);
+      if (!body) {
+        console.warn(`⚠️ Could not decode Body in ${blobName}`);
+        continue;
+      }
+
+      results.push({
+        tempC:           body.temperature ?? null,
+        humidity:        body.humidity    ?? null,
+        pressure:        body.pressure    ?? null,
+        latitude:        body.latitude    ?? null,
+        longitude:       body.longitude   ?? null,
+        altitude:        body.altitude    ?? null,
+        irradiance:      null,
+        avgWindSpeed:    null,
+        direction:       null,
+        compassDir:      null,
+        rainRatePerHour: null,
+        time: body.timestamp
+          ? new Date(body.timestamp).toISOString()
+          : raw.EnqueuedTimeUtc
+          ? new Date(raw.EnqueuedTimeUtc).toISOString()
+          : new Date(lastModified).toISOString(),
+        blobName,
+        source: 'iot-hub-json'
+      });
+    }
+
+    return results;
   } catch (err) {
     console.warn(`⚠️ Failed to parse JSON blob ${blobName}:`, err);
-    return null;
+    return [];
   }
 }
 
 /**
  * Parse a CSV blob
  */
-async function parseCsvBlob(content: string, blobName: string, lastModified: Date): Promise<any | null> {
+async function parseCsvBlob(content: string, blobName: string, lastModified: Date): Promise<any[]> {
   try {
     const parsed = await csvParser.parseFromString(content, {
       header: true,
@@ -81,91 +125,167 @@ async function parseCsvBlob(content: string, blobName: string, lastModified: Dat
     });
 
     const row = parsed.data?.[0];
-    if (!row) return null;
+    if (!row) return [];
 
-    return {
+    return [{
       ...row,
       time: new Date(lastModified).toISOString(),
       blobName,
       source: 'csv'
-    };
+    }];
   } catch (err) {
     console.warn(`⚠️ Failed to parse CSV blob ${blobName}:`, err);
-    return null;
+    return [];
   }
 }
 
-async function runAggregation(): Promise<NextResponse> {
+async function runAggregation(force = false): Promise<NextResponse> {
   try {
-    // Source:      aqs-frc  (STRING1 → index 1)
-    // Destination: weather  (STRING2 → index 2)
     const sourceService = new AzureBlobService(SOURCE_CONTAINER, 1);
     const destService   = new AzureBlobService(DEST_CONTAINER,   2);
 
-    // 1. Load existing aggregated.json from DESTINATION (weather / STRING2)
-    let existingData: any[]    = [];
-    let lastProcessedBlob      = '';
+    // 1. Load existing aggregated.json from DESTINATION (weather)
+    let existingData: any[] = [];
+    let lastProcessedBlob   = '';
 
-    try {
-      const existing = await destService.downloadBlob('aggregated.json');
-      const parsed   = JSON.parse(existing);
-      existingData       = parsed.data              || [];
-      lastProcessedBlob  = parsed.lastProcessedBlob || '';
-      console.log(`✅ Loaded ${existingData.length} existing data points from ${DEST_CONTAINER}`);
-    } catch {
-      console.log(`ℹ️ No existing aggregated.json in ${DEST_CONTAINER} — will create it`);
+    if (force) {
+      console.log(`⚡ [FORCE] Skipping existing data — reprocessing all blobs from ${SOURCE_CONTAINER}`);
+    } else {
+      try {
+        const existing = await destService.downloadBlob('aggregated.json');
+        const parsed   = JSON.parse(existing);
+        existingData      = parsed.data              || [];
+        lastProcessedBlob = parsed.lastProcessedBlob || '';
+        console.log(`✅ Loaded ${existingData.length} existing data points from ${DEST_CONTAINER}`);
+      } catch {
+        console.log(`ℹ️ No existing aggregated.json in ${DEST_CONTAINER} — will create it`);
+      }
     }
 
-    // 2. List all blobs from SOURCE (aqs-frc / STRING1)
-    //    Accept .json and .csv, exclude aggregated.json itself
+    // 2. Load the set of blob names already present in DESTINATION
+    //    This is used exclusively to decide whether to copy a raw blob —
+    //    it is independent from the parse cursor (lastProcessedBlob).
+    let destBlobNames = new Set<string>();
+    try {
+      const destBlobs = await destService.listBlobs();
+      destBlobNames   = new Set(destBlobs.map((b: any) => b.name));
+      console.log(`📋 Found ${destBlobNames.size} blobs already in ${DEST_CONTAINER}`);
+    } catch {
+      console.log(`ℹ️ Could not list destination blobs — will attempt to copy all`);
+    }
+
+    // 3. List all blobs from SOURCE (aqs-frc)
     const allBlobs  = await sourceService.listBlobs();
     const dataBlobs = allBlobs
-      .filter(b =>
+      .filter((b: any) =>
         (b.name.endsWith('.json') || b.name.endsWith('.csv')) &&
         b.name !== 'aggregated.json'
       )
-      .sort((a, b) =>
+      .sort((a: any, b: any) =>
         new Date(a.lastModified!).getTime() - new Date(b.lastModified!).getTime()
       );
 
     console.log(`📋 Found ${dataBlobs.length} data blobs (JSON + CSV) in ${SOURCE_CONTAINER}`);
 
-    // 3. Find only new blobs since last run
-    const lastIdx  = dataBlobs.findIndex(b => b.name === lastProcessedBlob);
-    const newBlobs = lastIdx === -1 ? dataBlobs : dataBlobs.slice(lastIdx + 1);
+    // 4. Find blobs to PARSE — those after the last processed cursor
+    const lastIdx    = force ? -1 : dataBlobs.findIndex((b: any) => b.name === lastProcessedBlob);
+    const parseBlobs = lastIdx === -1 ? dataBlobs : dataBlobs.slice(lastIdx + 1);
 
-    console.log(`📋 ${newBlobs.length} new blobs to process from ${SOURCE_CONTAINER}`);
+    console.log(`📋 ${parseBlobs.length} blobs to parse from ${SOURCE_CONTAINER}${force ? ' (forced)' : ''}`);
 
-    if (newBlobs.length === 0) {
+    // 5. Build the superset of blobs to download:
+    //    - All parseBlobs (need content for aggregation)
+    //    - All sourceBlobs NOT yet in destination (need content for raw copy)
+    //    We deduplicate by name so each blob is downloaded at most once.
+    const copyOnlyBlobs = dataBlobs.filter(
+      (b: any) => !destBlobNames.has(b.name) && !parseBlobs.find((p: any) => p.name === b.name)
+    );
+
+    const parseBlobNames = new Set(parseBlobs.map((b: any) => b.name));
+    const allBlobsToFetch = [
+      ...parseBlobs,
+      ...copyOnlyBlobs,
+    ];
+
+    console.log(`📋 ${copyOnlyBlobs.length} additional blobs to copy-only (not yet in ${DEST_CONTAINER})`);
+
+    if (allBlobsToFetch.length === 0) {
       return NextResponse.json({
         success: true,
-        message: 'Nothing new to process',
+        message: 'Nothing new to process or copy',
         totalPoints: existingData.length
       });
     }
 
-    // 4. Download and parse new blobs
-    const newData: any[] = [];
-    for (const blob of newBlobs) {
+    // 6. Download each blob — copy raw if not in destination, parse if in parseBlobs
+    const newData: any[]         = [];
+    const copiedBlobs: string[]  = [];
+    const skippedBlobs: string[] = [];
+
+    for (const blob of allBlobsToFetch) {
+      let content = '';
+
       try {
-        const content     = await sourceService.downloadBlob(blob.name);
-        const lastModified = blob.lastModified ? new Date(blob.lastModified) : new Date();
-
-        let row: any | null = null;
-
-        if (blob.name.endsWith('.json')) {
-          row = parseJsonBlob(content, blob.name, lastModified);
-        } else if (blob.name.endsWith('.csv')) {
-          row = await parseCsvBlob(content, blob.name, lastModified);
-        }
-
-        if (row) newData.push(row);
+        content = await sourceService.downloadBlob(blob.name);
       } catch (err) {
-        console.warn(`⚠️ Skipped ${blob.name}:`, err);
+        console.warn(`⚠️ Could not download ${blob.name}:`, err);
+        skippedBlobs.push(blob.name);
+        continue;
+      }
+
+      const lastModified = blob.lastModified ? new Date(blob.lastModified) : new Date();
+
+      // ── A. Copy raw blob ONLY if it does not already exist in DESTINATION ──
+      //      This check is purely destination-based — force mode does NOT
+      //      re-copy blobs that are already present.
+      const alreadyInDest = destBlobNames.has(blob.name);
+      if (!alreadyInDest) {
+        try {
+          const contentType = blob.name.endsWith('.json') ? 'application/json' : 'text/csv';
+          await destService.uploadBlob(blob.name, content, contentType);
+          copiedBlobs.push(blob.name);
+          console.log(`📤 Copied raw blob: ${blob.name} → ${DEST_CONTAINER}`);
+        } catch (err) {
+          console.warn(`⚠️ Failed to copy ${blob.name}:`, err);
+        }
+      } else {
+        console.log(`⏭️ Skipped copy (already exists in ${DEST_CONTAINER}): ${blob.name}`);
+      }
+
+      // ── B. Parse into normalized data points (only for parse-cursor blobs) ──
+      if (parseBlobNames.has(blob.name)) {
+        try {
+          let rows: any[] = [];
+          if (blob.name.endsWith('.json')) {
+            rows = parseJsonBlob(content, blob.name, lastModified);
+          } else if (blob.name.endsWith('.csv')) {
+            rows = await parseCsvBlob(content, blob.name, lastModified);
+          }
+          newData.push(...rows);
+        } catch (err) {
+          console.warn(`⚠️ Failed to parse ${blob.name}:`, err);
+        }
       }
     }
 
-    // 5. Merge and upload to DESTINATION (weather / STRING2)
+    // 7. Merge and upload aggregated.json to DESTINATION (weather)
+    //    Only update aggregated.json if there were blobs to parse.
+    if (parseBlobs.length === 0) {
+      console.log(`ℹ️ No new blobs to parse — aggregated.json unchanged`);
+      return NextResponse.json({
+        success:           true,
+        forced:            force,
+        source:            SOURCE_CONTAINER,
+        destination:       DEST_CONTAINER,
+        newPoints:         0,
+        totalPoints:       existingData.length,
+        copiedBlobs:       copiedBlobs.length,
+        skippedBlobs:      skippedBlobs.length,
+        lastProcessedBlob: lastProcessedBlob,
+        message:           'No new data to aggregate; raw copy-only blobs handled above'
+      });
+    }
+
     const allData  = [...existingData, ...newData];
     const lastBlob = dataBlobs[dataBlobs.length - 1];
 
@@ -178,14 +298,18 @@ async function runAggregation(): Promise<NextResponse> {
 
     await destService.uploadBlob('aggregated.json', aggregated, 'application/json');
 
-    console.log(`✅ Done — ${allData.length} total points (${newData.length} new) → saved to ${DEST_CONTAINER}`);
+    console.log(`✅ Done — ${allData.length} total points (${newData.length} new) → aggregated.json saved to ${DEST_CONTAINER}`);
+    console.log(`📦 ${copiedBlobs.length} new raw blobs copied to ${DEST_CONTAINER}`);
 
     return NextResponse.json({
       success:           true,
+      forced:            force,
       source:            SOURCE_CONTAINER,
       destination:       DEST_CONTAINER,
       newPoints:         newData.length,
       totalPoints:       allData.length,
+      copiedBlobs:       copiedBlobs.length,
+      skippedBlobs:      skippedBlobs.length,
       lastProcessedBlob: lastBlob?.name
     });
 
@@ -203,8 +327,9 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ validationResponse: validationCode });
   }
 
-  console.log(`⏰ [TRIGGER] Running aggregation: ${SOURCE_CONTAINER} → ${DEST_CONTAINER}`);
-  return runAggregation();
+  const force = request.nextUrl.searchParams.get('force') === 'true';
+  console.log(`⏰ [TRIGGER] Running aggregation: ${SOURCE_CONTAINER} → ${DEST_CONTAINER}${force ? ' (FORCED)' : ''}`);
+  return runAggregation(force);
 }
 
 export async function POST(request: NextRequest) {
@@ -219,5 +344,5 @@ export async function POST(request: NextRequest) {
   }
 
   console.log(`🔧 [MANUAL] Running aggregation: ${SOURCE_CONTAINER} → ${DEST_CONTAINER}`);
-  return runAggregation();
+  return runAggregation(false);
 }

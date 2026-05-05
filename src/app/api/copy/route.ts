@@ -30,6 +30,7 @@ async function runCopy(): Promise<NextResponse> {
     const dataBlobs = allBlobs.filter(
       (b: any) => b.name.endsWith('.json') || b.name.endsWith('.csv')
     );
+        console.log(`📋 [copy] Data blobs after filter:`, dataBlobs.map((b: any) => b.name));
 
     console.log(`📋 [copy] ${dataBlobs.length} data blobs found in ${SOURCE_CONTAINER}`);
 

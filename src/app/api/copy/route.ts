@@ -11,6 +11,7 @@ async function runCopy(): Promise<NextResponse> {
   try {
     const sourceService = new AzureBlobService(SOURCE_CONTAINER, 0);
     const destService   = new AzureBlobService(DEST_CONTAINER,   2);
+    
 
     // 1. List blobs already in DESTINATION
     let destBlobNames = new Set<string>();
@@ -24,6 +25,8 @@ async function runCopy(): Promise<NextResponse> {
 
     // 2. List data blobs in SOURCE
     const allBlobs  = await sourceService.listBlobs();
+    console.log(`📋 [copy] All blobs in source:`, allBlobs.map((b: any) => b.name));
+
     const dataBlobs = allBlobs.filter(
       (b: any) => b.name.endsWith('.json') || b.name.endsWith('.csv')
     );

@@ -15,6 +15,10 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "Taqsai",
   description: "Weather monitoring and forcasting",
+  icons: {
+    icon: "/favicon1.png",        // or "/favicon.png"
+    apple: "/apple-icon.png",    // optional
+  },
 };
 
 export default function RootLayout({

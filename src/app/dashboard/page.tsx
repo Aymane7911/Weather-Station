@@ -567,6 +567,7 @@ const WeatherDashboard = () => {
           {[
             { id: 'dashboard', label: 'Dashboard',  icon: Home,     action: () => { setActiveTab('dashboard'); setSidebarOpen(false); } },
             { id: 'forecast',  label: 'Forecast',   icon: Cloud,    action: () => { window.location.href = '/forecast'; setSidebarOpen(false); } },
+            { id: 'selection', label: 'All Stations', icon: ArrowLeft, action: () => { window.location.href = '/selection'; setSidebarOpen(false); } },
             { id: 'history',   label: 'History',    icon: Clock,    action: () => { window.location.href = `/history?container=${containerName}`; setSidebarOpen(false); } },
           ].map(item => (
             <button key={item.id} onClick={item.action} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all ${activeTab === item.id ? `${dm ? 'bg-sky-950 text-sky-400 border border-sky-800' : 'bg-sky-50 text-sky-600 border border-sky-100'}` : `${t.text} ${dm ? 'hover:bg-gray-800' : 'hover:bg-gray-50'}`}`}>

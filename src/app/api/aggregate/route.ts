@@ -151,11 +151,11 @@ async function runAggregation(
 
     // 2. List all data blobs (CSV + JSON), exclude aggregated.json itself
     const allBlobs   = await service.listBlobs();
-    const dataBlobs  = allBlobs
-      .filter(b =>
-        (b.name.endsWith('.csv') || b.name.endsWith('.json')) &&
-        b.name !== 'aggregated.json'
-      )
+    const dataBlobs = allBlobs
+  .filter(b =>
+    (b.name.toLowerCase().endsWith('.csv') || b.name.toLowerCase().endsWith('.json')) &&
+    b.name !== 'aggregated.json'
+  )
       .sort((a, b) =>
         new Date(a.lastModified!).getTime() - new Date(b.lastModified!).getTime()
       );
@@ -194,11 +194,11 @@ async function runAggregation(
       try {
         let rows: any[] = [];
 
-        if (blob.name.endsWith('.json')) {
-          rows = parseJsonBlob(content, blob.name, lastModified);
-        } else if (blob.name.endsWith('.csv')) {
-          rows = await parseCsvBlob(content, blob.name, lastModified);
-        }
+        if (blob.name.toLowerCase().endsWith('.json')) {
+  rows = parseJsonBlob(content, blob.name, lastModified);
+} else if (blob.name.toLowerCase().endsWith('.csv')) {
+  rows = await parseCsvBlob(content, blob.name, lastModified);
+}
 
         newData.push(...rows);
         console.log(`✅ [aggregate] Parsed ${rows.length} row(s) from ${blob.name}`);

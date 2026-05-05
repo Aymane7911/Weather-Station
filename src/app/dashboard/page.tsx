@@ -255,7 +255,7 @@ const WeatherDashboard = () => {
       const response = await fetch('/api/weather-data', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ containerName: container, latestOnly: false, page: 1, pageSize: 99999 })
+        body: JSON.stringify({ containerName: container, connectionIndex: connIndex, latestOnly: false, page: 1, pageSize: 99999 })
       });
       if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
       const data = await response.json();

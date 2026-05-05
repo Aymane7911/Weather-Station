@@ -3,16 +3,6 @@ import { NextRequest, NextResponse } from 'next/server';
 import { AzureBlobService } from '@/lib/azure';
 import { csvParser } from '@/lib/csvParser';
 
-/**
- * Generic aggregation route.
- * Works for ALL containers regardless of which storage account they live in.
- * Handles both CSV blobs (ws-* stations) and JSON blobs (IoT Hub format, e.g. weather).
- *
- * GET  /api/aggregate?container=ws-tawyeen&index=0
- * GET  /api/aggregate?container=weather&index=2&force=true
- * POST /api/aggregate  { "containerName": "ws-honeypark", "connectionIndex": 0 }
- */
-
 // ─── JSON (IoT Hub) helpers ───────────────────────────────────────────────────
 
 function decodeBody(base64: string): any {
@@ -59,25 +49,45 @@ function parseJsonBlob(content: string, blobName: string, lastModified: Date): a
       console.warn(`⚠️ [aggregate] Could not decode Body in ${blobName}`);
       continue;
     }
+
+    // ─── Resolve timestamp (handle malformed timestamps gracefully) ───────────
+    const resolvedTime = (() => {
+      if (body.timestamp) {
+        const t = new Date(body.timestamp);
+        if (!isNaN(t.getTime())) return t.toISOString();
+      }
+      if (raw.EnqueuedTimeUtc) {
+        const t = new Date(raw.EnqueuedTimeUtc);
+        if (!isNaN(t.getTime())) return t.toISOString();
+      }
+      if (raw.SystemProperties?.enqueuedTime) {
+        const t = new Date(raw.SystemProperties.enqueuedTime);
+        if (!isNaN(t.getTime())) return t.toISOString();
+      }
+      return new Date(lastModified).toISOString();
+    })();
+
     results.push({
-      tempC:           body.temperature ?? null,
-      humidity:        body.humidity    ?? null,
-      pressure:        body.pressure    ?? null,
-      latitude:        body.latitude    ?? null,
-      longitude:       body.longitude   ?? null,
-      altitude:        body.altitude    ?? null,
-      irradiance:      null,
-      avgWindSpeed:    null,
-      direction:       null,
-      compassDir:      null,
-      rainRatePerHour: null,
-      time: body.timestamp
-        ? new Date(body.timestamp).toISOString()
-        : raw.EnqueuedTimeUtc
-        ? new Date(raw.EnqueuedTimeUtc).toISOString()
-        : new Date(lastModified).toISOString(),
+      // ─── Weather fields — supports both device formats ──────────────────────
+      // Format 1 (ws device): tempC, avgWindSpeed, direction, compassDir, etc.
+      // Format 2 (tt device): temperature, humidity, pressure, lat/lng/alt
+      tempC:           body.tempC           ?? body.temperature  ?? null,
+      humidity:        body.humidity        ?? null,
+      pressure:        body.pressure        ?? null,
+      irradiance:      body.irradiance      ?? null,
+      avgWindSpeed:    body.avgWindSpeed     ?? null,
+      direction:       body.direction       ?? null,
+      compassDir:      body.compassDir      ?? null,
+      rainRatePerHour: body.rainRatePerHour ?? null,
+      latitude:        body.latitude        ?? null,
+      longitude:       body.longitude       ?? null,
+      altitude:        body.altitude        ?? null,
+
+      // ─── Metadata ───────────────────────────────────────────────────────────
+      time:     resolvedTime,
+      deviceId: raw.SystemProperties?.connectionDeviceId ?? null,
       blobName,
-      source: 'iot-hub-json',
+      source:   'iot-hub-json',
     });
   }
   return results;
@@ -150,12 +160,12 @@ async function runAggregation(
     }
 
     // 2. List all data blobs (CSV + JSON), exclude aggregated.json itself
-    const allBlobs   = await service.listBlobs();
+    const allBlobs  = await service.listBlobs();
     const dataBlobs = allBlobs
-  .filter(b =>
-    (b.name.toLowerCase().endsWith('.csv') || b.name.toLowerCase().endsWith('.json')) &&
-    b.name !== 'aggregated.json'
-  )
+      .filter(b =>
+        (b.name.toLowerCase().endsWith('.csv') || b.name.toLowerCase().endsWith('.json')) &&
+        b.name !== 'aggregated.json'
+      )
       .sort((a, b) =>
         new Date(a.lastModified!).getTime() - new Date(b.lastModified!).getTime()
       );
@@ -195,10 +205,10 @@ async function runAggregation(
         let rows: any[] = [];
 
         if (blob.name.toLowerCase().endsWith('.json')) {
-  rows = parseJsonBlob(content, blob.name, lastModified);
-} else if (blob.name.toLowerCase().endsWith('.csv')) {
-  rows = await parseCsvBlob(content, blob.name, lastModified);
-}
+          rows = parseJsonBlob(content, blob.name, lastModified);
+        } else if (blob.name.toLowerCase().endsWith('.csv')) {
+          rows = await parseCsvBlob(content, blob.name, lastModified);
+        }
 
         newData.push(...rows);
         console.log(`✅ [aggregate] Parsed ${rows.length} row(s) from ${blob.name}`);

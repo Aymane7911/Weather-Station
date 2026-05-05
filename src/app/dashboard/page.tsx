@@ -537,10 +537,10 @@ const WeatherDashboard = () => {
             
             <div className="h-[50px] flex items-center overflow-visible">
   <img 
-    src="/Taqsai.png" 
-    alt="Taqsai" 
-    className={`h-[180px] w-auto object-contain ${!dm ? 'drop-shadow-[0_0_3px_rgba(0,0,0,0.8)]' : ''}`}
-  />
+  src={dm ? "/Taqsai.png" : "/taqsai-light.png"} 
+  alt="Taqsai" 
+  className="h-[180px] w-auto object-contain"
+/>
 </div>
           </div>
           <button onClick={() => setSidebarOpen(false)} className={`p-1.5 rounded-lg transition-colors ${dm ? 'hover:bg-gray-800 text-gray-400' : 'hover:bg-gray-100 text-gray-500'}`}>
@@ -682,10 +682,10 @@ const WeatherDashboard = () => {
                 
                 <div className="h-[50px] flex items-center overflow-visible">
   <img 
-    src="/Taqsai.png" 
-    alt="Taqsai" 
-    className={`h-[180px] w-auto object-contain ${!dm ? 'drop-shadow-[0_0_3px_rgba(0,0,0,0.8)]' : ''}`}
-  />
+  src={dm ? "/Taqsai.png" : "/taqsai-light.png"} 
+  alt="Taqsai" 
+  className="h-[180px] w-auto object-contain"
+/>
 </div>
               </div>
             </div>

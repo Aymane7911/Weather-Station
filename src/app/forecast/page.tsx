@@ -509,10 +509,10 @@ export default function ForecastPage() {
                 
                 <div className="h-[50px] flex items-center overflow-visible">
   <img 
-    src="/Taqsai.png" 
-    alt="Taqsai" 
-    className={`h-[180px] w-auto object-contain ${!dm ? 'drop-shadow-[0_0_3px_rgba(0,0,0,0.8)]' : ''}`}
-  />
+  src={dm ? "/Taqsai.png" : "/taqsai-light.png"} 
+  alt="Taqsai" 
+  className="h-[180px] w-auto object-contain"
+/>
 </div>
               </div>
             </div>

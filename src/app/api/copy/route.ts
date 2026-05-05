@@ -2,8 +2,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { AzureBlobService } from '@/lib/azure';
 
-// SOURCE:      aqs-frc      → AZURE_STORAGE_CONNECTION_STRING1 (index 1)
-// DESTINATION: weather      → AZURE_STORAGE_CONNECTION_STRING2 (index 2)
+// SOURCE:      ws-fpo   → AZURE_STORAGE_CONNECTION_STRING (index 0)
+// DESTINATION: weather  → AZURE_STORAGE_CONNECTION_STRING2 (index 2)
 const SOURCE_CONTAINER = 'ws-fpo';
 const DEST_CONTAINER   = 'weather';
 
@@ -11,7 +11,6 @@ async function runCopy(): Promise<NextResponse> {
   try {
     const sourceService = new AzureBlobService(SOURCE_CONTAINER, 0);
     const destService   = new AzureBlobService(DEST_CONTAINER,   2);
-    
 
     // 1. List blobs already in DESTINATION
     let destBlobNames = new Set<string>();
@@ -23,20 +22,21 @@ async function runCopy(): Promise<NextResponse> {
       console.log(`ℹ️ [copy] Could not list destination blobs — will attempt to copy all`);
     }
 
-    // 2. List data blobs in SOURCE
-    const allBlobs  = await sourceService.listBlobs();
-    console.log(`📋 [copy] All blobs in source:`, allBlobs.map((b: any) => b.name));
+    // 2. List all blobs in SOURCE
+    const allBlobs = await sourceService.listBlobs();
+    console.log(`📋 [copy] All blobs in source (${SOURCE_CONTAINER}):`, allBlobs.map((b: any) => b.name));
 
+    // 3. Filter by extension (case-insensitive)
     const dataBlobs = allBlobs.filter(
-      (b: any) => b.name.endsWith('.json') || b.name.endsWith('.csv')
+      (b: any) =>
+        b.name.toLowerCase().endsWith('.json') ||
+        b.name.toLowerCase().endsWith('.csv')
     );
-        console.log(`📋 [copy] Data blobs after filter:`, dataBlobs.map((b: any) => b.name));
-
+    console.log(`📋 [copy] Data blobs after filter:`, dataBlobs.map((b: any) => b.name));
     console.log(`📋 [copy] ${dataBlobs.length} data blobs found in ${SOURCE_CONTAINER}`);
 
-    // 3. Find blobs not yet in destination
+    // 4. Find blobs not yet in destination
     const newBlobs = dataBlobs.filter((b: any) => !destBlobNames.has(b.name));
-
     console.log(`📋 [copy] ${newBlobs.length} new blobs to copy to ${DEST_CONTAINER}`);
 
     if (newBlobs.length === 0) {
@@ -47,7 +47,7 @@ async function runCopy(): Promise<NextResponse> {
       });
     }
 
-    // 4. Copy each new blob
+    // 5. Copy each new blob
     const copiedBlobs:  string[] = [];
     const skippedBlobs: string[] = [];
 
@@ -62,7 +62,7 @@ async function runCopy(): Promise<NextResponse> {
       }
 
       try {
-        const contentType = blob.name.endsWith('.json') ? 'application/json' : 'text/csv';
+        const contentType = blob.name.toLowerCase().endsWith('.json') ? 'application/json' : 'text/csv';
         await destService.uploadBlob(blob.name, content, contentType);
         copiedBlobs.push(blob.name);
         console.log(`📤 [copy] Copied: ${blob.name} → ${DEST_CONTAINER}`);
@@ -106,7 +106,6 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   // ── Azure EventGrid validation (POST with JSON body) ──────────────────────
-  // EventGrid sends a raw JSON array for validation, not wrapped in { }
   let body: any;
   try {
     const text = await request.text();

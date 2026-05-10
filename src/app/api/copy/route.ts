@@ -4,7 +4,7 @@ import { AzureBlobService } from '@/lib/azure';
 
 const PAIRS: { source: string; sourceIndex: 0 | 1 | 2; dest: string; destIndex: 0 | 1 | 2 }[] = [
   { source: 'ws-fpo', sourceIndex: 0, dest: 'weather',    destIndex: 2 },
-  { source: 'weather',    sourceIndex: 2, dest: 'ws-tawyeen', destIndex: 0 },
+  { source: 'weather',    sourceIndex: 2, dest: 'ws-fpo', destIndex: 0 },
 ];
 
 async function copyDirection(

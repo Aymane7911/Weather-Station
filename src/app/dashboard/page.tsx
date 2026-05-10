@@ -90,6 +90,11 @@ const WeatherDashboard = () => {
   const [adminCheckLoading, setAdminCheckLoading] = useState<boolean>(true);
   const [connectionIndex, setConnectionIndex] = useState<0 | 1 | 2>(0);
 
+  const urlContainer = typeof window !== 'undefined' 
+  ? new URLSearchParams(window.location.search).get('container') ?? ''
+  : '';
+const isTawyeen = urlContainer === 'ws-tawyeen' || containerName === 'ws-tawyeen';
+
 
   // ← NEW: Open-Meteo rain lookup map
   const [rainMap, setRainMap] = useState<Map<string, number>>(new Map());
@@ -823,17 +828,19 @@ const WeatherDashboard = () => {
           </div>
 
           {/* ← NEW: Rain chart using Open-Meteo data */}
-          <div className="mb-5">
-            <ChartCard
-              title="Precipitation"
-              dataKey="openMeteoRain"
-              color="#6366f1"
-              unit="mm"
-              icon={CloudRain}
-              data={filteredData}
-              gradient="from-blue-500 to-indigo-500"
-            />
-          </div>
+          {isTawyeen && (
+  <div className="mb-5">
+    <ChartCard
+      title="Precipitation"
+      dataKey="openMeteoRain"
+      color="#6366f1"
+      unit="mm"
+      icon={CloudRain}
+      data={filteredData}
+      gradient="from-blue-500 to-indigo-500"
+    />
+  </div>
+)}
 
           {/* Wind row */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 mb-5">

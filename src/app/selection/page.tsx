@@ -266,7 +266,9 @@ useEffect(() => {
       } catch {}
 
       // Step 1: Render cards instantly
-      const weatherStations: WeatherStation[] = allowed.map((container: any, index: number) => {
+const weatherStations: WeatherStation[] = allowed
+  .filter((container: any) => container.name !== 'ws-fpo') // ← hide fpo
+  .map((container: any, index: number) => {
         const storedName = localStorage.getItem(`station_name_${container.name}`);
         const displayName = storedName || container.name
           .replace('ws-', '').replace(/-/g, ' ')

@@ -20,36 +20,42 @@ interface WeatherDataPoint {
 const STATION_LAT = 25.555582;
 const STATION_LON = 56.080717;
 
-async function fetchOpenMeteoRain(): Promise<Map<string, number>> {
-  const res = await fetch('/api/rain-data');
+async function fetchOpenMeteoRain(data: WeatherDataPoint[]): Promise<Map<string, number>> {
+  // Find the oldest and newest timestamps in the station data
+  const times = data
+    .map(d => d.time ? new Date(d.time).getTime() : NaN)
+    .filter(t => !isNaN(t));
+
+  if (times.length === 0) return new Map();
+
+  const fmt = (d: Date) => d.toISOString().split('T')[0];
+  const startDate = fmt(new Date(Math.min(...times)));
+  const endDate = fmt(new Date()); // always fetch up to today
+
+  const res = await fetch(`/api/rain-data?start=${startDate}&end=${endDate}`);
   if (!res.ok) throw new Error(`Rain API error: ${res.status}`);
   const json = await res.json();
 
-  const times: string[] = json?.hourly?.time ?? [];
+  const timestamps: string[] = json?.hourly?.time ?? [];
   const values: number[] = json?.hourly?.precipitation ?? [];
 
   const map = new Map<string, number>();
-  times.forEach((t, i) => {
-    const mmPerHour = values[i] ?? 0;
-    // Spread hourly value across all four 15-min slots
-    // e.g. "2026-03-27T14:00" covers :00, :15, :30, :45
-    for (const mins of ['00', '15', '30', '45']) {
-      map.set(`${t.slice(0, 14)}${mins}`, mmPerHour / 4);
-    }
+  timestamps.forEach((t, i) => {
+    const mmPerSlot = (values[i] ?? 0) / 4;
+    map.set(`${t.slice(0, 14)}00`, mmPerSlot);
+    map.set(`${t.slice(0, 14)}15`, mmPerSlot);
+    map.set(`${t.slice(0, 14)}30`, mmPerSlot);
+    map.set(`${t.slice(0, 14)}45`, mmPerSlot);
   });
+
   return map;
 }
-
 function snapTo15Min(date: Date): string {
   const pad = (n: number) => String(n).padStart(2, '0');
-  const dubaiOffset = 4 * 60;
-  const localMs = date.getTime() + dubaiOffset * 60 * 1000;
-  const local = new Date(localMs);
-  const mins = local.getUTCMinutes();
-  const snappedMins = Math.floor(mins / 15) * 15;
+  const snappedMins = Math.floor(date.getUTCMinutes() / 15) * 15;
   return (
-    `${local.getUTCFullYear()}-${pad(local.getUTCMonth() + 1)}-${pad(local.getUTCDate())}` +
-    `T${pad(local.getUTCHours())}:${pad(snappedMins)}`
+    `${date.getUTCFullYear()}-${pad(date.getUTCMonth() + 1)}-${pad(date.getUTCDate())}` +
+    `T${pad(date.getUTCHours())}:${pad(snappedMins)}`
   );
 }
 
@@ -105,14 +111,16 @@ useEffect(() => {
 
   // ← Fetch Open-Meteo rain once on mount
   useEffect(() => {
-    let cancelled = false;
-    setRainLoading(true);
-    fetchOpenMeteoRain()
-      .then((map) => { if (!cancelled) setRainMap(map); })
-      .catch((err) => console.error('[Open-Meteo]', err))
-      .finally(() => { if (!cancelled) setRainLoading(false); });
-    return () => { cancelled = true; };
-  }, []);
+  if (weatherData.length === 0) return; // wait for station data first
+  
+  let cancelled = false;
+  setRainLoading(true);
+  fetchOpenMeteoRain(weatherData)
+    .then((map) => { if (!cancelled) setRainMap(map); })
+    .catch((err) => console.error('[Open-Meteo]', err))
+    .finally(() => { if (!cancelled) setRainLoading(false); });
+  return () => { cancelled = true; };
+}, [weatherData]);
 
   const getRainForTime = (isoTime?: string): number => {
     if (!isoTime || rainMap.size === 0) return 0;

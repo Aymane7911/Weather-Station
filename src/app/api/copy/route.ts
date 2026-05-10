@@ -7,6 +7,11 @@ const PAIRS: { source: string; sourceIndex: 0 | 1 | 2; dest: string; destIndex: 
   { source: 'weather',    sourceIndex: 2, dest: 'ws-fpo', destIndex: 0 },
 ];
 
+// ── Simple in-process lock to prevent concurrent runs ─────────────────────────
+let isRunning = false;
+let lastRunAt = 0;
+const DEBOUNCE_MS = 10_000; // wait 10s before allowing another run
+
 async function copyDirection(
   sourceContainer: string, sourceIndex: 0 | 1 | 2,
   destContainer:   string, destIndex:   0 | 1 | 2
@@ -18,10 +23,7 @@ async function copyDirection(
   try {
     const destBlobs = await destService.listBlobs();
     destBlobNames   = new Set(destBlobs.map((b: any) => b.name));
-    console.log(`📋 [copy] ${destBlobNames.size} blobs already in ${destContainer}`);
-  } catch {
-    console.log(`ℹ️ [copy] Could not list ${destContainer} — will copy all`);
-  }
+  } catch {}
 
   const allBlobs  = await sourceService.listBlobs();
   const dataBlobs = allBlobs.filter(
@@ -31,8 +33,6 @@ async function copyDirection(
   );
 
   const newBlobs = dataBlobs.filter((b: any) => !destBlobNames.has(b.name));
-  console.log(`📋 [copy] ${sourceContainer} → ${destContainer}: ${newBlobs.length} new blobs`);
-
   if (newBlobs.length === 0) return { copied: 0, skipped: 0, blobs: [] };
 
   const copiedBlobs:  string[] = [];
@@ -42,8 +42,7 @@ async function copyDirection(
     let content = '';
     try {
       content = await sourceService.downloadBlob(blob.name);
-    } catch (err) {
-      console.warn(`⚠️ [copy] Could not download ${blob.name}:`, err);
+    } catch {
       skippedBlobs.push(blob.name);
       continue;
     }
@@ -52,9 +51,7 @@ async function copyDirection(
         ? 'application/json' : 'text/csv';
       await destService.uploadBlob(blob.name, content, contentType);
       copiedBlobs.push(blob.name);
-      console.log(`📤 [copy] ${sourceContainer} → ${destContainer}: ${blob.name}`);
-    } catch (err) {
-      console.warn(`⚠️ [copy] Failed to upload ${blob.name}:`, err);
+    } catch {
       skippedBlobs.push(blob.name);
     }
   }
@@ -63,6 +60,21 @@ async function copyDirection(
 }
 
 async function runCopy(): Promise<NextResponse> {
+  const now = Date.now();
+
+  // Debounce — if a run finished recently, skip
+  if (now - lastRunAt < DEBOUNCE_MS) {
+    return NextResponse.json({ success: true, message: 'Debounced — too soon since last run' });
+  }
+
+  // Lock — if already running, skip
+  if (isRunning) {
+    return NextResponse.json({ success: true, message: 'Already running — skipped' });
+  }
+
+  isRunning = true;
+  lastRunAt = now;
+
   try {
     const results = await Promise.all(
       PAIRS.map(p => copyDirection(p.source, p.sourceIndex, p.dest, p.destIndex))
@@ -70,7 +82,10 @@ async function runCopy(): Promise<NextResponse> {
 
     const [fwd, rev] = results;
 
-    console.log(`✅ [copy] Done — fwd: ${fwd.copied} copied, rev: ${rev.copied} copied`);
+    // Only log if something actually happened
+    if (fwd.copied > 0 || rev.copied > 0) {
+      console.log(`✅ [copy] fwd: ${fwd.copied} copied, rev: ${rev.copied} copied`);
+    }
 
     return NextResponse.json({
       success: true,
@@ -81,16 +96,16 @@ async function runCopy(): Promise<NextResponse> {
     const msg = error instanceof Error ? error.message : 'Unknown error';
     console.error('❌ [copy] Failed:', msg);
     return NextResponse.json({ error: msg }, { status: 500 });
+  } finally {
+    isRunning = false;
   }
 }
 
 export async function GET(request: NextRequest) {
   const validationCode = request.nextUrl.searchParams.get('validationCode');
   if (validationCode) {
-    console.log('🔐 [copy] Azure webhook GET validation');
     return NextResponse.json({ validationResponse: validationCode });
   }
-  console.log(`⏰ [copy] GET trigger — bidirectional sync`);
   return runCopy();
 }
 
@@ -108,13 +123,10 @@ export async function POST(request: NextRequest) {
       (e: any) => e.eventType === 'Microsoft.EventGrid.SubscriptionValidationEvent'
     );
     if (ev) {
-      console.log('🔐 [copy] Azure EventGrid POST validation handshake');
       return NextResponse.json({ validationResponse: ev.data.validationCode });
     }
-    console.log(`📨 [copy] EventGrid POST event — running bidirectional sync`);
     return runCopy();
   }
 
-  console.log(`🔧 [copy] Manual POST trigger — bidirectional sync`);
   return runCopy();
 }

@@ -251,6 +251,16 @@ const isTawyeen = urlContainer === 'ws-tawyeen' || containerName === 'ws-tawyeen
 
   useEffect(() => { document.title = 'Weather Dashboard'; }, []);
 
+  const compassToDegrees = (compass?: string): number => {
+  const map: Record<string, number> = {
+    'N': 0, 'NNE': 22.5, 'NE': 45, 'ENE': 67.5,
+    'E': 90, 'ESE': 112.5, 'SE': 135, 'SSE': 157.5,
+    'S': 180, 'SSW': 202.5, 'SW': 225, 'WSW': 247.5,
+    'W': 270, 'WNW': 292.5, 'NW': 315, 'NNW': 337.5,
+  };
+  return map[compass?.toUpperCase() ?? ''] ?? 0;
+};
+
   const fetchWeatherData = async (container: string, connIndex: 0 | 1 | 2 = 0) => {
     setLoading(true);
     setError(null);
@@ -339,9 +349,13 @@ const isTawyeen = urlContainer === 'ws-tawyeen' || containerName === 'ws-tawyeen
     }
     // ← Inject Open-Meteo rain into each data point
     const withRain = filtered.map(d => ({
-      ...d,
-      openMeteoRain: getRainForTime(d.time as string),
-    }));
+  ...d,
+  openMeteoRain: getRainForTime(d.time as string),
+  // Override direction with compass-derived degrees if compassDir exists
+  direction: d.compassDir
+    ? compassToDegrees(d.compassDir as string)
+    : (d.direction ?? 0),
+}));
     return getOptimalDataSampling(withRain, timeFilter);
   };
 
@@ -656,6 +670,10 @@ const isTawyeen = urlContainer === 'ws-tawyeen' || containerName === 'ws-tawyeen
   // ← Latest Open-Meteo rain for the stat card
   const latestRain = getRainForTime(latestData.time as string);
 
+
+  const correctedDirection = latestData.compassDir
+  ? compassToDegrees(latestData.compassDir as string)
+  : (latestData.direction ?? 0);
   const lastReadingTime = getCombinedDateTime();
 
   const timeFilters = [
@@ -845,7 +863,7 @@ const isTawyeen = urlContainer === 'ws-tawyeen' || containerName === 'ws-tawyeen
           {/* Wind row */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 mb-5">
             <div className="lg:col-span-1">
-              <CompassCard direction={latestData.direction || 0} compassDir={latestData.compassDir} />
+              <CompassCard direction={correctedDirection} compassDir={latestData.compassDir} />
             </div>
             <div className="lg:col-span-2">
               <WindSpeedWithDirectionChart data={filteredData} />

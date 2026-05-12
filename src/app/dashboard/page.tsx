@@ -350,7 +350,9 @@ const isTawyeen = urlContainer === 'ws-tawyeen' || containerName === 'ws-tawyeen
     // ← Inject Open-Meteo rain into each data point
     const withRain = filtered.map(d => ({
   ...d,
-  openMeteoRain: getRainForTime(d.time as string),
+  openMeteoRain: isTawyeen 
+  ? getRainForTime(d.time as string) 
+  : (d.rainRatePerHour ?? 0),
   // Override direction with compass-derived degrees if compassDir exists
   direction: d.compassDir
     ? compassToDegrees(d.compassDir as string)
@@ -782,7 +784,9 @@ const isTawyeen = urlContainer === 'ws-tawyeen' || containerName === 'ws-tawyeen
             <StatCard
               icon={CloudRain}
               title="Rain"
-              value={rainLoading ? '…' : latestRain.toFixed(2)}
+              value={isTawyeen 
+  ? (rainLoading ? '…' : latestRain.toFixed(2)) 
+  : (latestData.rainRatePerHour ?? 0).toFixed(2)}
               unit="mm"
               gradient="from-blue-500 to-indigo-500"
               
@@ -911,11 +915,13 @@ const isTawyeen = urlContainer === 'ws-tawyeen' || containerName === 'ws-tawyeen
 </td>
                       {/* ↓ CHANGED: Rain column now uses Open-Meteo lookup */}
                       <td className={`px-5 py-3.5 text-xs font-semibold ${
-                        getRainForTime(row.time as string) > 0
+                        (isTawyeen ? getRainForTime(row.time as string) : (row.rainRatePerHour ?? 0)) > 0
                           ? dm ? 'text-blue-400' : 'text-blue-600'
                           : t.textSub
                       }`}>
-                        {rainLoading ? '…' : `${getRainForTime(row.time as string).toFixed(2)} mm`}
+                        {isTawyeen 
+  ? (rainLoading ? '…' : `${getRainForTime(row.time as string).toFixed(2)} mm`)
+  : `${(row.rainRatePerHour ?? 0).toFixed(2)} mm`}
                       </td>
                     </tr>
                   ))}

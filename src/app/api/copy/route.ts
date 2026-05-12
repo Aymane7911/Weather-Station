@@ -2,52 +2,55 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { AzureBlobService } from '@/lib/azure';
 
-// SOURCE:      ws-fpo   → AZURE_STORAGE_CONNECTION_STRING (index 0)
-// DESTINATION: weather  → AZURE_STORAGE_CONNECTION_STRING2 (index 2)
 const SOURCE_CONTAINER = 'ws-fpo';
 const DEST_CONTAINER   = 'weather';
 
+// ── Debounce + lock to prevent concurrent/flooding runs ───────────────────────
+let isRunning = false;
+let lastRunAt = 0;
+const DEBOUNCE_MS = 10_000; // 10 seconds between runs
+
 async function runCopy(): Promise<NextResponse> {
+  const now = Date.now();
+
+  if (now - lastRunAt < DEBOUNCE_MS) {
+    return NextResponse.json({ success: true, message: 'Debounced — too soon since last run' });
+  }
+
+  if (isRunning) {
+    return NextResponse.json({ success: true, message: 'Already running — skipped' });
+  }
+
+  isRunning = true;
+  lastRunAt = now;
+
   try {
     const sourceService = new AzureBlobService(SOURCE_CONTAINER, 0);
     const destService   = new AzureBlobService(DEST_CONTAINER,   2);
 
-    // 1. List blobs already in DESTINATION
+    // 1. List blobs already in destination
     let destBlobNames = new Set<string>();
     try {
       const destBlobs = await destService.listBlobs();
       destBlobNames   = new Set(destBlobs.map((b: any) => b.name));
-      console.log(`📋 [copy] ${destBlobNames.size} blobs already in ${DEST_CONTAINER}`);
-    } catch {
-      console.log(`ℹ️ [copy] Could not list destination blobs — will attempt to copy all`);
-    }
+    } catch {}
 
-    // 2. List all blobs in SOURCE
-    const allBlobs = await sourceService.listBlobs();
-    console.log(`📋 [copy] All blobs in source (${SOURCE_CONTAINER}):`, allBlobs.map((b: any) => b.name));
-
-    // 3. Filter by extension (case-insensitive)
+    // 2. List blobs in source
+    const allBlobs  = await sourceService.listBlobs();
     const dataBlobs = allBlobs.filter(
       (b: any) =>
-        b.name.toLowerCase().endsWith('.json') ||
-        b.name.toLowerCase().endsWith('.csv')
+        (b.name.toLowerCase().endsWith('.json') || b.name.toLowerCase().endsWith('.csv')) &&
+        b.name !== 'aggregated.json'
     );
-    console.log(`📋 [copy] Data blobs after filter:`, dataBlobs.map((b: any) => b.name));
-    console.log(`📋 [copy] ${dataBlobs.length} data blobs found in ${SOURCE_CONTAINER}`);
 
-    // 4. Find blobs not yet in destination
+    // 3. Find new blobs only
     const newBlobs = dataBlobs.filter((b: any) => !destBlobNames.has(b.name));
-    console.log(`📋 [copy] ${newBlobs.length} new blobs to copy to ${DEST_CONTAINER}`);
 
     if (newBlobs.length === 0) {
-      return NextResponse.json({
-        success:     true,
-        message:     'Nothing new to copy',
-        totalInDest: destBlobNames.size,
-      });
+      return NextResponse.json({ success: true, message: 'Nothing new to copy' });
     }
 
-    // 5. Copy each new blob
+    // 4. Copy each new blob
     const copiedBlobs:  string[] = [];
     const skippedBlobs: string[] = [];
 
@@ -55,24 +58,24 @@ async function runCopy(): Promise<NextResponse> {
       let content = '';
       try {
         content = await sourceService.downloadBlob(blob.name);
-      } catch (err) {
-        console.warn(`⚠️ [copy] Could not download ${blob.name}:`, err);
+      } catch {
         skippedBlobs.push(blob.name);
         continue;
       }
-
       try {
-        const contentType = blob.name.toLowerCase().endsWith('.json') ? 'application/json' : 'text/csv';
+        const contentType = blob.name.toLowerCase().endsWith('.json')
+          ? 'application/json' : 'text/csv';
         await destService.uploadBlob(blob.name, content, contentType);
         copiedBlobs.push(blob.name);
-        console.log(`📤 [copy] Copied: ${blob.name} → ${DEST_CONTAINER}`);
-      } catch (err) {
-        console.warn(`⚠️ [copy] Failed to upload ${blob.name}:`, err);
+      } catch {
         skippedBlobs.push(blob.name);
       }
     }
 
-    console.log(`✅ [copy] Done — ${copiedBlobs.length} copied, ${skippedBlobs.length} skipped`);
+    // Only log if something happened
+    if (copiedBlobs.length > 0) {
+      console.log(`✅ [copy] ${copiedBlobs.length} copied, ${skippedBlobs.length} skipped`);
+    }
 
     return NextResponse.json({
       success:      true,
@@ -82,30 +85,26 @@ async function runCopy(): Promise<NextResponse> {
       skippedBlobs: skippedBlobs.length,
       copied:       copiedBlobs,
       skipped:      skippedBlobs,
-      totalInDest:  destBlobNames.size + copiedBlobs.length,
     });
 
   } catch (error) {
     const msg = error instanceof Error ? error.message : 'Unknown error';
     console.error('❌ [copy] Failed:', msg);
     return NextResponse.json({ error: msg }, { status: 500 });
+  } finally {
+    isRunning = false;
   }
 }
 
 export async function GET(request: NextRequest) {
-  // ── Azure EventGrid webhook validation (GET with ?validationCode=...) ──────
   const validationCode = request.nextUrl.searchParams.get('validationCode');
   if (validationCode) {
-    console.log('🔐 [copy] Azure webhook GET validation');
     return NextResponse.json({ validationResponse: validationCode });
   }
-
-  console.log(`⏰ [copy] GET trigger — ${SOURCE_CONTAINER} → ${DEST_CONTAINER}`);
   return runCopy();
 }
 
 export async function POST(request: NextRequest) {
-  // ── Azure EventGrid validation (POST with JSON body) ──────────────────────
   let body: any;
   try {
     const text = await request.text();
@@ -114,21 +113,15 @@ export async function POST(request: NextRequest) {
     body = {};
   }
 
-  // Validation handshake — array with SubscriptionValidationEvent
   if (Array.isArray(body)) {
     const ev = body.find(
       (e: any) => e.eventType === 'Microsoft.EventGrid.SubscriptionValidationEvent'
     );
     if (ev) {
-      console.log('🔐 [copy] Azure EventGrid POST validation handshake');
       return NextResponse.json({ validationResponse: ev.data.validationCode });
     }
-    // Real blob-created events — run the copy
-    console.log(`📨 [copy] EventGrid POST event received — running copy`);
     return runCopy();
   }
 
-  // Manual POST trigger
-  console.log(`🔧 [copy] Manual POST trigger — ${SOURCE_CONTAINER} → ${DEST_CONTAINER}`);
   return runCopy();
 }

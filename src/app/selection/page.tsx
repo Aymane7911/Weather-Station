@@ -289,7 +289,9 @@ const weatherStations: WeatherStation[] = allowed
       setStations(weatherStations);
 
       // Step 2: Fetch status in background
-      allowed.forEach(async (container: any) => {
+      allowed
+  .filter((container: any) => container.name !== 'ws-fpo')
+  .forEach(async (container: any) => {
         try {
           const res = await fetch('/api/weather-data', {
             method: 'POST',

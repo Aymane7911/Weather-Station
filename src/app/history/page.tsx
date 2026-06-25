@@ -1,6 +1,6 @@
 'use client'
 import React, { useState, useEffect } from 'react';
-import { Calendar, ArrowLeft, RefreshCw, Download, Clock, Activity, X, Cloud, Menu, Moon, SunMedium, AlertCircle, Filter, CloudRain } from 'lucide-react';
+import { ArrowLeft, Download, Clock, Activity, Cloud, Moon, SunMedium, AlertCircle, Filter, CloudRain } from 'lucide-react';
 
 interface WeatherDataPoint {
   time?: string;
@@ -15,30 +15,21 @@ interface WeatherDataPoint {
   [key: string]: string | number | undefined;
 }
 
-// ─── Open-Meteo rain helpers ─────────────────────────────────────────────────
-
-const STATION_LAT = 25.555582;
-const STATION_LON = 56.080717;
+// ─── Open-Meteo rain helpers ──────────────────────────────────────────────────
 
 async function fetchOpenMeteoRain(data: WeatherDataPoint[]): Promise<Map<string, number>> {
-  // Find the oldest and newest timestamps in the station data
   const times = data
     .map(d => d.time ? new Date(d.time).getTime() : NaN)
     .filter(t => !isNaN(t));
-
   if (times.length === 0) return new Map();
-
   const fmt = (d: Date) => d.toISOString().split('T')[0];
   const startDate = fmt(new Date(Math.min(...times)));
-  const endDate = fmt(new Date()); // always fetch up to today
-
+  const endDate = fmt(new Date());
   const res = await fetch(`/api/rain-data?start=${startDate}&end=${endDate}`);
   if (!res.ok) throw new Error(`Rain API error: ${res.status}`);
   const json = await res.json();
-
   const timestamps: string[] = json?.hourly?.time ?? [];
   const values: number[] = json?.hourly?.precipitation ?? [];
-
   const map = new Map<string, number>();
   timestamps.forEach((t, i) => {
     const mmPerSlot = (values[i] ?? 0) / 4;
@@ -47,9 +38,9 @@ async function fetchOpenMeteoRain(data: WeatherDataPoint[]): Promise<Map<string,
     map.set(`${t.slice(0, 14)}30`, mmPerSlot);
     map.set(`${t.slice(0, 14)}45`, mmPerSlot);
   });
-
   return map;
 }
+
 function snapTo15Min(date: Date): string {
   const pad = (n: number) => String(n).padStart(2, '0');
   const snappedMins = Math.floor(date.getUTCMinutes() / 15) * 15;
@@ -69,35 +60,28 @@ const HistoryPage = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [containerName, setContainerName] = useState('ws-tawyeen');
+  const [connectionIndex, setConnectionIndex] = useState<0 | 1 | 2>(0);
   const [stationName, setStationName] = useState('Weather Station');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [showDatePicker, setShowDatePicker] = useState(false);
-
-  // ← Open-Meteo rain state
   const [rainMap, setRainMap] = useState<Map<string, number>>(new Map());
   const [rainLoading, setRainLoading] = useState(true);
-  // ─── DEBUG: add this temporarily ─────────────────────────────────────────
-useEffect(() => {
-  if (rainLoading) return;
-  console.log('[Rain Debug] rainMap size:', rainMap.size);
-  console.log('[Rain Debug] sample entries:', [...rainMap.entries()].slice(0, 5));
-  
-  // Test: manually fetch and log the raw response
-  fetch('/api/rain-data')
-    .then(res => {
-      console.log('[Rain Debug] HTTP status:', res.status);
-      return res.json();
-    })
-    .then(json => {
-      console.log('[Rain Debug] Raw response:', json);
-      console.log('[Rain Debug] minutely_15 keys:', Object.keys(json?.minutely_15 ?? {}));
-      console.log('[Rain Debug] time sample:', json?.minutely_15?.time?.slice(0, 3));
-      console.log('[Rain Debug] precip sample:', json?.minutely_15?.precipitation?.slice(0, 3));
-    })
-    .catch(err => console.error('[Rain Debug] Fetch error:', err));
-}, [rainLoading]);
 
+  const dm = mounted && darkMode;
+
+  const t = {
+    card: dm ? 'bg-gray-900/40 border border-white/10 backdrop-blur-md' : 'bg-white/40 border border-white/50 backdrop-blur-md',
+    text: dm ? 'text-gray-100' : 'text-gray-900',
+    textSub: dm ? 'text-gray-300' : 'text-gray-800',
+    textMuted: dm ? 'text-gray-400' : 'text-gray-700',
+    divider: dm ? 'border-white/10' : 'border-black/10',
+    input: dm ? 'bg-gray-800/60 border-white/10 text-gray-100 focus:ring-sky-500' : 'bg-white/60 border-white/40 text-gray-900 focus:ring-sky-500',
+    tableHead: dm ? 'bg-white/5 text-gray-300' : 'bg-black/5 text-gray-900',
+    tableRow: dm ? 'hover:bg-white/5 border-white/10' : 'hover:bg-black/5 border-black/10',
+  };
+
+  // ─── Dark mode ────────────────────────────────────────────────────────────
   useEffect(() => {
     const saved = localStorage.getItem('darkMode');
     if (saved === 'true') setDarkMode(true);
@@ -109,38 +93,45 @@ useEffect(() => {
     localStorage.setItem('darkMode', String(darkMode));
   }, [darkMode, mounted]);
 
-  // ← Fetch Open-Meteo rain once on mount
+  // ─── Init: read container + connectionIndex from localStorage/URL ─────────
   useEffect(() => {
-  if (weatherData.length === 0) return; // wait for station data first
-  
-  let cancelled = false;
-  setRainLoading(true);
-  fetchOpenMeteoRain(weatherData)
-    .then((map) => { if (!cancelled) setRainMap(map); })
-    .catch((err) => console.error('[Open-Meteo]', err))
-    .finally(() => { if (!cancelled) setRainLoading(false); });
-  return () => { cancelled = true; };
-}, [weatherData]);
+    const urlParams = new URLSearchParams(window.location.search);
+    const urlContainer = urlParams.get('container');
+    const storedContainer = localStorage.getItem('selected_station');
+    const storedName = localStorage.getItem('selected_station_name');
+    const storedIndex = localStorage.getItem('selected_connection_index');
+
+    const selectedContainer = urlContainer || storedContainer || 'ws-tawyeen';
+    const selectedName = storedName || selectedContainer;
+    const selectedIndex = (storedIndex ? parseInt(storedIndex) : 0) as 0 | 1 | 2;
+
+    setContainerName(selectedContainer);
+    setStationName(selectedName);
+    setConnectionIndex(selectedIndex);
+    fetchWeatherData(selectedContainer, selectedIndex);
+    document.title = 'Historical Data';
+  }, []);
+
+  // ─── Rain fetch ───────────────────────────────────────────────────────────
+  useEffect(() => {
+    if (weatherData.length === 0) return;
+    let cancelled = false;
+    setRainLoading(true);
+    fetchOpenMeteoRain(weatherData)
+      .then((map) => { if (!cancelled) setRainMap(map); })
+      .catch((err) => console.error('[Open-Meteo]', err))
+      .finally(() => { if (!cancelled) setRainLoading(false); });
+    return () => { cancelled = true; };
+  }, [weatherData]);
+
+  // ─── Date filter ──────────────────────────────────────────────────────────
+  useEffect(() => { applyDateFilter(); }, [startDate, endDate, weatherData]);
 
   const getRainForTime = (isoTime?: string): number => {
     if (!isoTime || rainMap.size === 0) return 0;
     const date = new Date(isoTime);
     if (isNaN(date.getTime())) return 0;
     return rainMap.get(snapTo15Min(date)) ?? 0;
-  };
-
-  const dm = mounted && darkMode;
-
-  const t = {
-    bg: 'bg-transparent',
-    card: dm ? 'bg-gray-900/40 border border-white/10 backdrop-blur-md' : 'bg-white/40 border border-white/50 backdrop-blur-md',
-    text: dm ? 'text-gray-100' : 'text-gray-900',
-    textSub: dm ? 'text-gray-300' : 'text-gray-800',
-    textMuted: dm ? 'text-gray-400' : 'text-gray-700',
-    divider: dm ? 'border-white/10' : 'border-black/10',
-    input: dm ? 'bg-gray-800/60 border-white/10 text-gray-100 focus:ring-sky-500' : 'bg-white/60 border-white/40 text-gray-900 focus:ring-sky-500',
-    tableHead: dm ? 'bg-white/5 text-gray-300' : 'bg-black/5 text-gray-900',
-    tableRow: dm ? 'hover:bg-white/5 border-white/10' : 'hover:bg-black/5 border-black/10',
   };
 
   const getFakePressure = (seed?: number | string): number => {
@@ -153,29 +144,21 @@ useEffect(() => {
     return parseFloat((base + decimal).toFixed(2));
   };
 
-  useEffect(() => {
-    const urlParams = new URLSearchParams(window.location.search);
-    const urlContainer = urlParams.get('container');
-    const storedContainer = localStorage.getItem('selected_station');
-    const storedName = localStorage.getItem('selected_station_name');
-    const selectedContainer = urlContainer || storedContainer || 'ws-tawyeen';
-    const selectedName = storedName || selectedContainer;
-    setContainerName(selectedContainer);
-    setStationName(selectedName);
-    fetchWeatherData(selectedContainer);
-    document.title = 'Historical Data';
-  }, []);
-
-  useEffect(() => { applyDateFilter(); }, [startDate, endDate, weatherData]);
-
-  const fetchWeatherData = async (container: string) => {
+  // ─── Fetch weather data ───────────────────────────────────────────────────
+  const fetchWeatherData = async (container: string, connIndex: 0 | 1 | 2 = 0) => {
     setLoading(true);
     setError(null);
     try {
       const response = await fetch('/api/weather-data', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ containerName: container, latestOnly: false, page: 1, pageSize: 99999 })
+        body: JSON.stringify({
+          containerName: container,
+          connectionIndex: connIndex,
+          latestOnly: false,
+          page: 1,
+          pageSize: 99999,
+        }),
       });
       if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
       const data = await response.json();
@@ -199,9 +182,9 @@ useEffect(() => {
       const itemDate = new Date(item.time);
       const start = startDate ? new Date(startDate) : null;
       const end = endDate ? new Date(endDate) : null;
-      if (start && end) { end.setHours(23,59,59,999); return itemDate >= start && itemDate <= end; }
+      if (start && end) { end.setHours(23, 59, 59, 999); return itemDate >= start && itemDate <= end; }
       if (start) return itemDate >= start;
-      if (end) { end.setHours(23,59,59,999); return itemDate <= end; }
+      if (end) { end.setHours(23, 59, 59, 999); return itemDate <= end; }
       return true;
     });
     setFilteredData(filtered);
@@ -209,19 +192,10 @@ useEffect(() => {
 
   const clearDateFilter = () => { setStartDate(''); setEndDate(''); setFilteredData(weatherData); };
 
-  // ← CSV export now uses Open-Meteo rain
+  // ─── CSV export ───────────────────────────────────────────────────────────
   const exportToCSV = () => {
     if (filteredData.length === 0) return;
-    const headers = [
-      'Time',
-      'Temperature (°C)',
-      'Humidity (%)',
-      'Solar Irradiance (W/m²)',
-      'Wind Speed (km/h)',
-      'Direction',
-      'Pressure (hPa)',
-      'Rain (mm)',
-    ];
+    const headers = ['Time', 'Temperature (°C)', 'Humidity (%)', 'Solar Irradiance (W/m²)', 'Wind Speed (km/h)', 'Direction', 'Pressure (hPa)', 'Rain (mm)'];
     const csvContent = [
       headers.join(','),
       ...filteredData.map((row) => [
@@ -245,20 +219,21 @@ useEffect(() => {
     document.body.removeChild(link);
   };
 
+  // ─── Loading ──────────────────────────────────────────────────────────────
   if (loading) {
     return (
       <div className={`min-h-screen ${dm ? 'bg-gray-950' : 'bg-slate-100'} flex items-center justify-center relative overflow-hidden`}>
         <div className="absolute inset-0 pointer-events-none">
-          <div className={`absolute inset-0 ${dm ? 'bg-gradient-to-br from-gray-950 via-slate-900 to-gray-950' : 'bg-gradient-to-br from-sky-50 via-slate-100 to-blue-50'}`}/>
-          <div className={`absolute top-1/4 left-1/4 w-96 h-96 rounded-full blur-3xl opacity-[0.07] bg-sky-400 animate-pulse`}/>
-          <div className={`absolute bottom-1/4 right-1/4 w-64 h-64 rounded-full blur-3xl opacity-[0.05] bg-blue-400 animate-pulse`} style={{ animationDelay: '1s' }}/>
+          <div className={`absolute inset-0 ${dm ? 'bg-gradient-to-br from-gray-950 via-slate-900 to-gray-950' : 'bg-gradient-to-br from-sky-50 via-slate-100 to-blue-50'}`} />
+          <div className="absolute top-1/4 left-1/4 w-96 h-96 rounded-full blur-3xl opacity-[0.07] bg-sky-400 animate-pulse" />
+          <div className="absolute bottom-1/4 right-1/4 w-64 h-64 rounded-full blur-3xl opacity-[0.05] bg-blue-400 animate-pulse" style={{ animationDelay: '1s' }} />
         </div>
         <div className="relative text-center">
           <div className="relative w-24 h-24 mx-auto mb-8">
-            <div className={`absolute inset-0 border-2 rounded-full ${dm ? 'border-gray-800' : 'border-gray-200'}`}/>
-            <div className="absolute inset-0 border-2 border-sky-500 rounded-full border-t-transparent animate-spin"/>
+            <div className={`absolute inset-0 border-2 rounded-full ${dm ? 'border-gray-800' : 'border-gray-200'}`} />
+            <div className="absolute inset-0 border-2 border-sky-500 rounded-full border-t-transparent animate-spin" />
             <div className="absolute inset-0 flex items-center justify-center">
-              <Cloud className={`w-10 h-10 ${dm ? 'text-sky-400' : 'text-sky-500'}`}/>
+              <Cloud className={`w-10 h-10 ${dm ? 'text-sky-400' : 'text-sky-500'}`} />
             </div>
           </div>
           <p className={`text-xl font-bold mb-1 ${dm ? 'text-gray-100' : 'text-gray-800'}`}>Loading Historical Data</p>
@@ -268,6 +243,7 @@ useEffect(() => {
     );
   }
 
+  // ─── Error ────────────────────────────────────────────────────────────────
   if (error) {
     return (
       <div className={`min-h-screen ${dm ? 'bg-gray-950' : 'bg-slate-100'} flex items-center justify-center p-6`}>
@@ -277,7 +253,10 @@ useEffect(() => {
           </div>
           <h2 className={`text-2xl font-black mb-3 text-center ${t.text}`}>Connection Error</h2>
           <p className={`text-center mb-6 text-sm ${t.textSub}`}>{error}</p>
-          <button onClick={() => window.location.href = `/dashboard?container=${containerName}`} className="w-full bg-gradient-to-r from-sky-500 to-blue-600 text-white py-3.5 px-6 rounded-xl hover:from-sky-600 hover:to-blue-700 transition-all font-bold text-sm shadow-lg flex items-center justify-center gap-2">
+          <button
+            onClick={() => window.location.href = `/dashboard?container=${containerName}`}
+            className="w-full bg-gradient-to-r from-sky-500 to-blue-600 text-white py-3.5 px-6 rounded-xl hover:from-sky-600 hover:to-blue-700 transition-all font-bold text-sm shadow-lg flex items-center justify-center gap-2"
+          >
             <ArrowLeft className="w-4 h-4" /> Back to Dashboard
           </button>
         </div>
@@ -285,15 +264,15 @@ useEffect(() => {
     );
   }
 
-  // ← Rain column uses Open-Meteo lookup; highlights rainy rows in blue
-  const columns: { key: string; label: string; render: (row: WeatherDataPoint, i: number) => React.ReactNode }[] = [
-    { key: 'time',         label: 'Time',              render: (row) => row.time ? new Date(row.time).toLocaleString() : '—' },
-    { key: 'tempC',        label: 'Temp',              render: (row) => row.tempC !== undefined ? `${row.tempC}°C` : '—' },
-    { key: 'humidity',     label: 'Humidity',          render: (row) => row.humidity !== undefined ? `${row.humidity}%` : '—' },
-    { key: 'irradiance',   label: 'Irradiance',        render: (row) => row.irradiance !== undefined ? `${row.irradiance} W/m²` : '—' },
-    { key: 'avgWindSpeed', label: 'Wind',              render: (row) => row.avgWindSpeed !== undefined ? `${row.avgWindSpeed} km/h` : '—' },
-    { key: 'compassDir',   label: 'Direction',         render: (row) => row.compassDir || (row.direction ? `${row.direction}°` : '—') },
-    { key: 'pressure',     label: 'Pressure',          render: (row) => `${getFakePressure(row.time)} hPa` },
+  // ─── Table columns ────────────────────────────────────────────────────────
+  const columns: { key: string; label: string; render: (row: WeatherDataPoint) => React.ReactNode }[] = [
+    { key: 'time',         label: 'Time',      render: (row) => row.time ? new Date(row.time).toLocaleString() : '—' },
+    { key: 'tempC',        label: 'Temp',      render: (row) => row.tempC !== undefined ? `${row.tempC}°C` : '—' },
+    { key: 'humidity',     label: 'Humidity',  render: (row) => row.humidity !== undefined ? `${row.humidity}%` : '—' },
+    { key: 'irradiance',   label: 'Irradiance',render: (row) => row.irradiance !== undefined ? `${row.irradiance} W/m²` : '—' },
+    { key: 'avgWindSpeed', label: 'Wind',      render: (row) => row.avgWindSpeed !== undefined ? `${row.avgWindSpeed} km/h` : '—' },
+    { key: 'compassDir',   label: 'Direction', render: (row) => row.compassDir || (row.direction ? `${row.direction}°` : '—') },
+    { key: 'pressure',     label: 'Pressure',  render: (row) => `${getFakePressure(row.time)} hPa` },
     {
       key: 'rain',
       label: 'Rain',
@@ -301,17 +280,15 @@ useEffect(() => {
         if (rainLoading) return <span className={dm ? 'text-gray-500' : 'text-gray-400'}>…</span>;
         const mm = getRainForTime(row.time as string);
         return (
-          <span className={mm > 0
-            ? `font-bold ${dm ? 'text-blue-400' : 'text-blue-600'}`
-            : dm ? 'text-gray-500' : 'text-gray-400'
-          }>
+          <span className={mm > 0 ? `font-bold ${dm ? 'text-blue-400' : 'text-blue-600'}` : dm ? 'text-gray-500' : 'text-gray-400'}>
             {mm.toFixed(2)} mm
           </span>
         );
-      }
+      },
     },
   ];
 
+  // ─── Render ───────────────────────────────────────────────────────────────
   return (
     <div className="min-h-screen relative transition-colors duration-300">
 
@@ -328,19 +305,18 @@ useEffect(() => {
           <div className="flex items-center justify-between px-5 py-3.5">
 
             <div className="flex items-center gap-3">
-              <button onClick={() => window.location.href = `/dashboard?container=${containerName}`} className={`p-2 rounded-lg transition-colors ${dm ? 'hover:bg-gray-800 text-gray-400' : 'hover:bg-gray-100 text-gray-600'}`}>
+              <button
+                onClick={() => window.location.href = `/dashboard?container=${containerName}`}
+                className={`p-2 rounded-lg transition-colors ${dm ? 'hover:bg-gray-800 text-gray-400' : 'hover:bg-gray-100 text-gray-600'}`}
+              >
                 <ArrowLeft className="w-5 h-5" />
               </button>
-              
-              <div className="flex items-center gap-2.5">
-                
-                <div className="h-[50px] flex items-center overflow-visible">
-  <img 
-  src={dm ? "/Taqsai.png" : "/Taqsai-light.png"} 
-  alt="Taqsai" 
-  className="h-[180px] w-auto object-contain"
-/>
-</div>
+              <div className="h-[50px] flex items-center overflow-visible">
+                <img
+                  src={dm ? '/Taqsai.png' : '/Taqsai-light.png'}
+                  alt="Taqsai"
+                  className="h-[180px] w-auto object-contain"
+                />
               </div>
             </div>
 
@@ -348,8 +324,6 @@ useEffect(() => {
               <span className={`text-xs font-bold px-3 py-1.5 rounded-full border ${dm ? 'text-sky-400 bg-sky-950/60 border-sky-900/60' : 'text-sky-700 bg-sky-50 border-sky-100'}`}>
                 {filteredData.length} Records
               </span>
-              {/* ← Rain data status badge */}
-              
               {(startDate || endDate) && (
                 <span className={`text-xs font-bold px-3 py-1.5 rounded-full border ${dm ? 'text-violet-400 bg-violet-950/60 border-violet-900/60' : 'text-violet-700 bg-violet-50 border-violet-100'}`}>
                   Filtered
@@ -358,14 +332,23 @@ useEffect(() => {
             </div>
 
             <div className="flex items-center gap-2">
-              <button onClick={() => setDarkMode(!dm)} className={`p-2 rounded-lg transition-colors ${dm ? 'hover:bg-gray-800 text-yellow-400' : 'hover:bg-gray-100 text-gray-600'}`}>
+              <button
+                onClick={() => setDarkMode(!dm)}
+                className={`p-2 rounded-lg transition-colors ${dm ? 'hover:bg-gray-800 text-yellow-400' : 'hover:bg-gray-100 text-gray-600'}`}
+              >
                 {dm ? <SunMedium className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
               </button>
-              <button onClick={() => setShowDatePicker(!showDatePicker)} className={`flex items-center gap-2 px-4 py-2 rounded-lg font-bold text-xs transition-all ${showDatePicker ? 'bg-gradient-to-r from-violet-500 to-purple-600 text-white shadow-md' : dm ? 'bg-gray-800 text-gray-300 hover:bg-gray-700' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}>
+              <button
+                onClick={() => setShowDatePicker(!showDatePicker)}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg font-bold text-xs transition-all ${showDatePicker ? 'bg-gradient-to-r from-violet-500 to-purple-600 text-white shadow-md' : dm ? 'bg-gray-800 text-gray-300 hover:bg-gray-700' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}
+              >
                 <Filter className="w-3.5 h-3.5" />
                 <span className="hidden sm:inline">Filter</span>
               </button>
-              <button onClick={exportToCSV} className="flex items-center gap-2 bg-gradient-to-r from-emerald-500 to-teal-600 text-white px-4 py-2 rounded-lg hover:from-emerald-600 hover:to-teal-700 transition-all shadow-md hover:shadow-lg font-bold text-xs">
+              <button
+                onClick={exportToCSV}
+                className="flex items-center gap-2 bg-gradient-to-r from-emerald-500 to-teal-600 text-white px-4 py-2 rounded-lg hover:from-emerald-600 hover:to-teal-700 transition-all shadow-md hover:shadow-lg font-bold text-xs"
+              >
                 <Download className="w-3.5 h-3.5" />
                 <span className="hidden sm:inline">Export CSV</span>
               </button>
@@ -380,16 +363,31 @@ useEffect(() => {
               <div className="flex flex-col sm:flex-row items-start sm:items-end gap-4">
                 {[
                   { label: 'Start Date', val: startDate, set: setStartDate },
-                  { label: 'End Date',   val: endDate,   set: setEndDate   },
+                  { label: 'End Date',   val: endDate,   set: setEndDate },
                 ].map(({ label, val, set }) => (
                   <div key={label} className="flex-1 w-full">
                     <label className={`block text-xs font-semibold uppercase tracking-widest mb-2 ${t.textSub}`}>{label}</label>
-                    <input type="date" value={val} onChange={e => set(e.target.value)} className={`w-full px-3 py-2.5 border rounded-xl text-sm focus:ring-2 focus:outline-none transition-all ${t.input}`}/>
+                    <input
+                      type="date"
+                      value={val}
+                      onChange={e => set(e.target.value)}
+                      className={`w-full px-3 py-2.5 border rounded-xl text-sm focus:ring-2 focus:outline-none transition-all ${t.input}`}
+                    />
                   </div>
                 ))}
                 <div className="flex gap-2">
-                  <button onClick={clearDateFilter} className={`px-4 py-2.5 rounded-xl font-bold text-xs whitespace-nowrap transition-all ${dm ? 'bg-gray-700 text-gray-300 hover:bg-gray-600' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}>Clear</button>
-                  <button onClick={() => setShowDatePicker(false)} className="px-4 py-2.5 bg-gradient-to-r from-sky-500 to-blue-600 text-white rounded-xl hover:from-sky-600 hover:to-blue-700 transition-all font-bold text-xs whitespace-nowrap shadow-md">Apply</button>
+                  <button
+                    onClick={clearDateFilter}
+                    className={`px-4 py-2.5 rounded-xl font-bold text-xs whitespace-nowrap transition-all ${dm ? 'bg-gray-700 text-gray-300 hover:bg-gray-600' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}
+                  >
+                    Clear
+                  </button>
+                  <button
+                    onClick={() => setShowDatePicker(false)}
+                    className="px-4 py-2.5 bg-gradient-to-r from-sky-500 to-blue-600 text-white rounded-xl hover:from-sky-600 hover:to-blue-700 transition-all font-bold text-xs whitespace-nowrap shadow-md"
+                  >
+                    Apply
+                  </button>
                 </div>
               </div>
               {(startDate || endDate) && (
@@ -419,7 +417,6 @@ useEffect(() => {
                 <p className={`text-xs ${t.textSub}`}>Complete Weather History</p>
               </div>
             </div>
-            
           </div>
 
           {/* Table card */}
@@ -458,8 +455,11 @@ useEffect(() => {
                     {filteredData.map((row, i) => (
                       <tr key={i} className={`transition-colors ${t.tableRow}`}>
                         {columns.map(col => (
-                          <td key={col.key} className={`px-5 py-3.5 text-xs whitespace-nowrap ${col.key === 'time' ? `font-semibold ${t.text}` : t.textSub}`}>
-                            {col.render(row, i)}
+                          <td
+                            key={col.key}
+                            className={`px-5 py-3.5 text-xs whitespace-nowrap ${col.key === 'time' ? `font-semibold ${t.text}` : t.textSub}`}
+                          >
+                            {col.render(row)}
                           </td>
                         ))}
                       </tr>

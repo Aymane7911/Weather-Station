@@ -14,38 +14,26 @@ interface WeatherDataPoint {
   humidity?: number;
   pressure?: number;
   rainRatePerHour?: number;
-  openMeteoRain?: number; // ← injected from Open-Meteo
+  openMeteoRain?: number;
   [key: string]: string | number | undefined;
 }
-
-// ─── Open-Meteo rain helpers ────────────────────────────────────────────────
 
 const STATION_LAT = 25.555582;
 const STATION_LON = 56.080717;
 
-/**
- * Fetches 15-minute precipitation data from Open-Meteo for the past month.
- * Returns a Map keyed by ISO timestamp (rounded to 15-min bucket) → mm value.
- */
 async function fetchOpenMeteoRain(data: WeatherDataPoint[]): Promise<Map<string, number>> {
-  // Find the oldest and newest timestamps in the station data
   const times = data
     .map(d => d.time ? new Date(d.time).getTime() : NaN)
     .filter(t => !isNaN(t));
-
   if (times.length === 0) return new Map();
-
   const fmt = (d: Date) => d.toISOString().split('T')[0];
   const startDate = fmt(new Date(Math.min(...times)));
-  const endDate = fmt(new Date()); // always fetch up to today
-
+  const endDate = fmt(new Date());
   const res = await fetch(`/api/rain-data?start=${startDate}&end=${endDate}`);
   if (!res.ok) throw new Error(`Rain API error: ${res.status}`);
   const json = await res.json();
-
   const timestamps: string[] = json?.hourly?.time ?? [];
   const values: number[] = json?.hourly?.precipitation ?? [];
-
   const map = new Map<string, number>();
   timestamps.forEach((t, i) => {
     const mmPerSlot = (values[i] ?? 0) / 4;
@@ -54,7 +42,6 @@ async function fetchOpenMeteoRain(data: WeatherDataPoint[]): Promise<Map<string,
     map.set(`${t.slice(0, 14)}30`, mmPerSlot);
     map.set(`${t.slice(0, 14)}45`, mmPerSlot);
   });
-
   return map;
 }
 
@@ -67,8 +54,19 @@ function snapTo15Min(date: Date): string {
   );
 }
 
-// ─── Component ───────────────────────────────────────────────────────────────
+// ─── Wind unit helpers ────────────────────────────────────────────────────────
+type WindUnit = 'kmh' | 'ms';
 
+function convertWind(value: number | undefined, unit: WindUnit): number | undefined {
+  if (value === undefined || value === null) return undefined;
+  return unit === 'ms' ? parseFloat((value / 3.6).toFixed(2)) : value;
+}
+
+function windUnitLabel(unit: WindUnit): string {
+  return unit === 'ms' ? 'm/s' : 'km/h';
+}
+
+// ─── Component ────────────────────────────────────────────────────────────────
 const WeatherDashboard = () => {
   const [darkMode, setDarkMode] = useState<boolean>(false);
   const [mounted, setMounted] = useState<boolean>(false);
@@ -90,13 +88,14 @@ const WeatherDashboard = () => {
   const [adminCheckLoading, setAdminCheckLoading] = useState<boolean>(true);
   const [connectionIndex, setConnectionIndex] = useState<0 | 1 | 2>(0);
 
-  const urlContainer = typeof window !== 'undefined' 
-  ? new URLSearchParams(window.location.search).get('container') ?? ''
-  : '';
-const isTawyeen = urlContainer === 'ws-tawyeen' || containerName === 'ws-tawyeen';
+  // Wind unit toggle — persisted in localStorage
+  const [windUnit, setWindUnit] = useState<WindUnit>('kmh');
 
+  const urlContainer = typeof window !== 'undefined'
+    ? new URLSearchParams(window.location.search).get('container') ?? ''
+    : '';
+  const isTawyeen = urlContainer === 'ws-tawyeen' || containerName === 'ws-tawyeen';
 
-  // ← NEW: Open-Meteo rain lookup map
   const [rainMap, setRainMap] = useState<Map<string, number>>(new Map());
   const [rainLoading, setRainLoading] = useState<boolean>(true);
 
@@ -107,20 +106,17 @@ const isTawyeen = urlContainer === 'ws-tawyeen' || containerName === 'ws-tawyeen
     console.log(`[WeatherDashboard] ${message}`, data || '');
   };
 
-  // ─── Fetch Open-Meteo rain once on mount ──────────────────────────────────
   useEffect(() => {
-  if (weatherData.length === 0) return; // wait for station data first
-  
-  let cancelled = false;
-  setRainLoading(true);
-  fetchOpenMeteoRain(weatherData)
-    .then((map) => { if (!cancelled) setRainMap(map); })
-    .catch((err) => console.error('[Open-Meteo]', err))
-    .finally(() => { if (!cancelled) setRainLoading(false); });
-  return () => { cancelled = true; };
-}, [weatherData]);
+    if (weatherData.length === 0) return;
+    let cancelled = false;
+    setRainLoading(true);
+    fetchOpenMeteoRain(weatherData)
+      .then((map) => { if (!cancelled) setRainMap(map); })
+      .catch((err) => console.error('[Open-Meteo]', err))
+      .finally(() => { if (!cancelled) setRainLoading(false); });
+    return () => { cancelled = true; };
+  }, [weatherData]);
 
-  // ─── Helper: look up rain for a given ISO timestamp ───────────────────────
   const getRainForTime = (isoTime?: string): number => {
     if (!isoTime || rainMap.size === 0) return 0;
     const date = new Date(isoTime);
@@ -132,6 +128,8 @@ const isTawyeen = urlContainer === 'ws-tawyeen' || containerName === 'ws-tawyeen
   useEffect(() => {
     const saved = localStorage.getItem('darkMode');
     if (saved === 'true') setDarkMode(true);
+    const savedUnit = localStorage.getItem('windUnit') as WindUnit | null;
+    if (savedUnit === 'kmh' || savedUnit === 'ms') setWindUnit(savedUnit);
     setMounted(true);
   }, []);
 
@@ -141,18 +139,23 @@ const isTawyeen = urlContainer === 'ws-tawyeen' || containerName === 'ws-tawyeen
   }, [darkMode, mounted]);
 
   useEffect(() => {
+    if (!mounted) return;
+    localStorage.setItem('windUnit', windUnit);
+  }, [windUnit, mounted]);
+
+  useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search);
     const urlContainer = urlParams.get('container');
     const storedContainer = localStorage.getItem('selected_station');
     const storedName = localStorage.getItem('selected_station_name');
-    const storedIndex      = localStorage.getItem('selected_connection_index');
+    const storedIndex = localStorage.getItem('selected_connection_index');
     const selectedContainer = urlContainer || storedContainer || 'ws-tawyeen';
     const selectedName = storedName || selectedContainer;
-    const selectedIndex     = (storedIndex ? parseInt(storedIndex) : 0) as 0 | 1 | 2;
+    const selectedIndex = (storedIndex ? parseInt(storedIndex) : 0) as 0 | 1 | 2;
     setContainerName(selectedContainer);
     setStationName(selectedName);
     setConnectionIndex(selectedIndex);
-    fetchWeatherData(selectedContainer, selectedIndex); 
+    fetchWeatherData(selectedContainer, selectedIndex);
     const interval = setInterval(() => fetchWeatherData(selectedContainer, selectedIndex), 5 * 60 * 1000);
     return () => clearInterval(interval);
   }, []);
@@ -252,14 +255,14 @@ const isTawyeen = urlContainer === 'ws-tawyeen' || containerName === 'ws-tawyeen
   useEffect(() => { document.title = 'Weather Dashboard'; }, []);
 
   const compassToDegrees = (compass?: string): number => {
-  const map: Record<string, number> = {
-    'N': 0, 'NNE': 22.5, 'NE': 45, 'ENE': 67.5,
-    'E': 90, 'ESE': 112.5, 'SE': 135, 'SSE': 157.5,
-    'S': 180, 'SSW': 202.5, 'SW': 225, 'WSW': 247.5,
-    'W': 270, 'WNW': 292.5, 'NW': 315, 'NNW': 337.5,
+    const map: Record<string, number> = {
+      'N': 0, 'NNE': 22.5, 'NE': 45, 'ENE': 67.5,
+      'E': 90, 'ESE': 112.5, 'SE': 135, 'SSE': 157.5,
+      'S': 180, 'SSW': 202.5, 'SW': 225, 'WSW': 247.5,
+      'W': 270, 'WNW': 292.5, 'NW': 315, 'NNW': 337.5,
+    };
+    return map[compass?.toUpperCase() ?? ''] ?? 0;
   };
-  return map[compass?.toUpperCase() ?? ''] ?? 0;
-};
 
   const fetchWeatherData = async (container: string, connIndex: 0 | 1 | 2 = 0) => {
     setLoading(true);
@@ -347,23 +350,23 @@ const isTawyeen = urlContainer === 'ws-tawyeen' || containerName === 'ws-tawyeen
         return true;
       });
     }
-    // ← Inject Open-Meteo rain into each data point
     const withRain = filtered.map(d => ({
-  ...d,
-  openMeteoRain: isTawyeen 
-  ? getRainForTime(d.time as string) 
-  : (d.rainRatePerHour ?? 0),
-  // Override direction with compass-derived degrees if compassDir exists
-  direction: d.compassDir
-    ? compassToDegrees(d.compassDir as string)
-    : (d.direction ?? 0),
-}));
+      ...d,
+      openMeteoRain: isTawyeen
+        ? getRainForTime(d.time as string)
+        : (d.rainRatePerHour ?? 0),
+      direction: d.compassDir
+        ? compassToDegrees(d.compassDir as string)
+        : (d.direction ?? 0),
+      // Pre-convert wind for charts
+      avgWindSpeed: convertWind(d.avgWindSpeed, windUnit),
+    }));
     return getOptimalDataSampling(withRain, timeFilter);
   };
 
   const clearDateFilter = () => { setStartDate(''); setEndDate(''); };
 
-  // ─── Theme tokens ────────────────────────────────────────────────────────────
+  // ─── Theme tokens ──────────────────────────────────────────────────────────
   const t = {
     bg: 'bg-transparent',
     card: dm ? 'bg-gray-900/40 border border-white/10 backdrop-blur-md' : 'bg-white/40 border border-white/50 backdrop-blur-md',
@@ -385,7 +388,33 @@ const isTawyeen = urlContainer === 'ws-tawyeen' || containerName === 'ws-tawyeen
     axisStroke: dm ? '#d1d5db' : '#111827',
   };
 
-  // ─── Wind Compass ─────────────────────────────────────────────────────────────
+  // ─── Wind Unit Toggle ──────────────────────────────────────────────────────
+  const WindUnitToggle = () => (
+    <div className={`inline-flex items-center rounded-lg p-0.5 text-xs font-bold shrink-0 ${dm ? 'bg-gray-800 border border-white/10' : 'bg-gray-100 border border-black/10'}`}>
+      <button
+        onClick={() => setWindUnit('kmh')}
+        className={`px-2.5 py-1.5 rounded-md transition-all ${
+          windUnit === 'kmh'
+            ? 'bg-gradient-to-r from-sky-500 to-cyan-500 text-white shadow-md shadow-sky-500/30'
+            : dm ? 'text-gray-400 hover:text-gray-200' : 'text-gray-500 hover:text-gray-800'
+        }`}
+      >
+        km/h
+      </button>
+      <button
+        onClick={() => setWindUnit('ms')}
+        className={`px-2.5 py-1.5 rounded-md transition-all ${
+          windUnit === 'ms'
+            ? 'bg-gradient-to-r from-sky-500 to-cyan-500 text-white shadow-md shadow-sky-500/30'
+            : dm ? 'text-gray-400 hover:text-gray-200' : 'text-gray-500 hover:text-gray-800'
+        }`}
+      >
+        m/s
+      </button>
+    </div>
+  );
+
+  // ─── Wind Compass ──────────────────────────────────────────────────────────
   const WindCompass = ({ direction, size = 140 }: { direction: number; size?: number }) => {
     const arrowLength = size * 0.35;
     const cx = size / 2, cy = size / 2;
@@ -428,7 +457,7 @@ const isTawyeen = urlContainer === 'ws-tawyeen' || containerName === 'ws-tawyeen
     );
   };
 
-  // ─── Stat Card ────────────────────────────────────────────────────────────────
+  // ─── Stat Card ─────────────────────────────────────────────────────────────
   const StatCard = ({ icon: Icon, title, value, unit, gradient, accent, badge }: any) => (
     <div className={`relative overflow-hidden rounded-2xl shadow-md ${t.card} transition-all duration-300 group hover:-translate-y-1 hover:shadow-xl`}>
       <div className={`absolute inset-0 bg-gradient-to-br ${gradient} opacity-[0.06] group-hover:opacity-[0.1] transition-opacity`}/>
@@ -454,6 +483,33 @@ const isTawyeen = urlContainer === 'ws-tawyeen' || containerName === 'ws-tawyeen
       <div className={`h-0.5 bg-gradient-to-r ${gradient} opacity-60`}/>
     </div>
   );
+
+  // ─── Wind Speed Stat Card (unit toggle embedded) ───────────────────────────
+  const WindSpeedStatCard = ({ value }: { value: number | undefined }) => {
+    const displayValue = convertWind(value, windUnit);
+    const label = windUnitLabel(windUnit);
+    return (
+      <div className={`relative overflow-hidden rounded-2xl shadow-md ${t.card} transition-all duration-300 group hover:-translate-y-1 hover:shadow-xl`}>
+        <div className="absolute inset-0 bg-gradient-to-br from-sky-500 to-cyan-500 opacity-[0.06] group-hover:opacity-[0.1] transition-opacity"/>
+        <div className="relative p-5">
+          <div className="flex items-start justify-between mb-3">
+            <div className="inline-flex p-2.5 rounded-xl bg-gradient-to-br from-sky-500 to-cyan-500 shadow-md">
+              <Wind className="w-4 h-4 text-white" />
+            </div>
+            <WindUnitToggle />
+          </div>
+          <p className={`text-xs font-semibold uppercase tracking-widest mb-1 ${t.textSub}`}>Wind Speed</p>
+          <div className="flex items-baseline gap-1.5">
+            <span className="text-2xl font-black text-transparent bg-clip-text bg-gradient-to-br from-sky-500 to-cyan-500">
+              {displayValue !== undefined ? displayValue : '—'}
+            </span>
+            <span className={`text-xs font-medium ${t.textMuted}`}>{label}</span>
+          </div>
+        </div>
+        <div className="h-0.5 bg-gradient-to-r from-sky-500 to-cyan-500 opacity-60"/>
+      </div>
+    );
+  };
 
   const CompassCard = ({ direction, compassDir }: any) => (
     <div className={`relative overflow-hidden rounded-2xl shadow-md ${t.card} h-full transition-all duration-300 hover:shadow-xl`}>
@@ -504,7 +560,9 @@ const isTawyeen = urlContainer === 'ws-tawyeen' || containerName === 'ws-tawyeen
     </div>
   );
 
+  // ─── Wind Speed + Direction Chart (unit-aware) ─────────────────────────────
   const WindSpeedWithDirectionChart = ({ data }: any) => {
+    const unitLabel = windUnitLabel(windUnit);
     const CustomizedDot = (props: any) => {
       const { cx, cy, payload, index } = props;
       const direction = payload.direction || 0;
@@ -521,14 +579,17 @@ const isTawyeen = urlContainer === 'ws-tawyeen' || containerName === 'ws-tawyeen
     };
     return (
       <div className={`rounded-2xl shadow-md ${t.card} p-6 h-full transition-all duration-300 hover:shadow-xl`}>
-        <div className="flex items-center mb-4 space-x-3">
-          <div className="p-2.5 rounded-xl bg-gradient-to-br from-sky-500 to-cyan-500 shadow-md">
-            <Wind className="w-4 h-4 text-white" />
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center space-x-3">
+            <div className="p-2.5 rounded-xl bg-gradient-to-br from-sky-500 to-cyan-500 shadow-md">
+              <Wind className="w-4 h-4 text-white" />
+            </div>
+            <div>
+              <h3 className={`text-base font-bold ${t.text}`}>Wind Speed & Direction</h3>
+              <p className={`text-xs mt-0.5 ${t.textMuted}`}>Arrows indicate wind direction</p>
+            </div>
           </div>
-          <div>
-            <h3 className={`text-base font-bold ${t.text}`}>Wind Speed & Direction</h3>
-            <p className={`text-xs mt-0.5 ${t.textMuted}`}>Arrows indicate wind direction</p>
-          </div>
+          <WindUnitToggle />
         </div>
         <ResponsiveContainer width="100%" height={260}>
           <AreaChart data={data} margin={{ top: 20, right: 10, left: 0, bottom: 5 }}>
@@ -540,8 +601,17 @@ const isTawyeen = urlContainer === 'ws-tawyeen' || containerName === 'ws-tawyeen
             </defs>
             <CartesianGrid strokeDasharray="3 3" stroke={t.gridStroke} opacity={0.5}/>
             <XAxis dataKey="time" stroke={t.axisStroke} tick={{ fill: t.axisStroke, fontSize: 11 }} tickMargin={8} interval="preserveStartEnd" minTickGap={50} tickFormatter={(v) => formatXAxisDate(v, timeFilter)}/>
-            <YAxis stroke={t.axisStroke} tick={{ fill: t.axisStroke, fontSize: 11 }} tickMargin={8} width={48} label={{ value: 'km/h', angle: -90, position: 'insideLeft', style: { fill: t.axisStroke, fontWeight: 'bold', fontSize: 11 } }}/>
-            <Tooltip contentStyle={{ backgroundColor: t.tooltip, border: 'none', borderRadius: '14px', boxShadow: '0 20px 60px rgba(0,0,0,0.2)', padding: '12px' }} labelStyle={{ fontWeight: 700, color: t.tooltipText, marginBottom: 4 }} labelFormatter={(v) => { const d = new Date(v); return isNaN(d.getTime()) ? String(v) : d.toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' }); }} formatter={(v: any, _: string, props: any) => { const dir = props.payload.direction || 0; const cd = props.payload.compassDir || 'N/A'; return [`${v} km/h · ${cd} (${dir}°)`, 'Wind']; }}/>
+            <YAxis stroke={t.axisStroke} tick={{ fill: t.axisStroke, fontSize: 11 }} tickMargin={8} width={48} label={{ value: unitLabel, angle: -90, position: 'insideLeft', style: { fill: t.axisStroke, fontWeight: 'bold', fontSize: 11 } }}/>
+            <Tooltip
+              contentStyle={{ backgroundColor: t.tooltip, border: 'none', borderRadius: '14px', boxShadow: '0 20px 60px rgba(0,0,0,0.2)', padding: '12px' }}
+              labelStyle={{ fontWeight: 700, color: t.tooltipText, marginBottom: 4 }}
+              labelFormatter={(v) => { const d = new Date(v); return isNaN(d.getTime()) ? String(v) : d.toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' }); }}
+              formatter={(v: any, _: string, props: any) => {
+                const dir = props.payload.direction || 0;
+                const cd = props.payload.compassDir || 'N/A';
+                return [`${v} ${unitLabel} · ${cd} (${dir}°)`, 'Wind'];
+              }}
+            />
             <Area type="monotone" dataKey="avgWindSpeed" stroke="#38bdf8" strokeWidth={2.5} fill="url(#grad-windSpeed)" dot={<CustomizedDot />} activeDot={{ r: 7, strokeWidth: 2.5, stroke: '#fff', fill: '#38bdf8' }}/>
           </AreaChart>
         </ResponsiveContainer>
@@ -549,7 +619,7 @@ const isTawyeen = urlContainer === 'ws-tawyeen' || containerName === 'ws-tawyeen
     );
   };
 
-  // ─── Sidebar ──────────────────────────────────────────────────────────────────
+  // ─── Sidebar ───────────────────────────────────────────────────────────────
   const Sidebar = () => (
     <>
       {sidebarOpen && (
@@ -558,14 +628,9 @@ const isTawyeen = urlContainer === 'ws-tawyeen' || containerName === 'ws-tawyeen
       <aside className={`fixed top-0 left-0 h-full w-72 z-50 transform transition-transform duration-300 ease-in-out ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'} ${dm ? 'bg-gray-950 border-r border-gray-800' : 'bg-white border-r border-gray-100'} shadow-2xl flex flex-col`}>
         <div className={`px-6 py-5 flex items-center justify-between border-b ${t.divider}`}>
           <div className="flex items-center gap-3">
-            
             <div className="h-[50px] flex items-center overflow-visible">
-  <img 
-  src={dm ? "/Taqsai.png" : "/taqsai-light.png"} 
-  alt="Taqsai" 
-  className="h-[180px] w-auto object-contain"
-/>
-</div>
+              <img src={dm ? "/Taqsai.png" : "/taqsai-light.png"} alt="Taqsai" className="h-[180px] w-auto object-contain"/>
+            </div>
           </div>
           <button onClick={() => setSidebarOpen(false)} className={`p-1.5 rounded-lg transition-colors ${dm ? 'hover:bg-gray-800 text-gray-400' : 'hover:bg-gray-100 text-gray-500'}`}>
             <X className="w-5 h-5" />
@@ -584,10 +649,10 @@ const isTawyeen = urlContainer === 'ws-tawyeen' || containerName === 'ws-tawyeen
         <nav className="flex-1 px-4 space-y-1 overflow-y-auto">
           <p className={`text-xs font-semibold uppercase tracking-widest px-2 py-2 ${t.textMuted}`}>Navigation</p>
           {[
-            { id: 'dashboard', label: 'Dashboard',  icon: Home,     action: () => { setActiveTab('dashboard'); setSidebarOpen(false); } },
-            { id: 'forecast',  label: 'Forecast',   icon: Cloud,    action: () => { window.location.href = '/forecast'; setSidebarOpen(false); } },
+            { id: 'dashboard', label: 'Dashboard',    icon: Home,      action: () => { setActiveTab('dashboard'); setSidebarOpen(false); } },
+            { id: 'forecast',  label: 'Forecast',     icon: Cloud,     action: () => { window.location.href = '/forecast'; setSidebarOpen(false); } },
             { id: 'selection', label: 'All Stations', icon: ArrowLeft, action: () => { window.location.href = '/selection'; setSidebarOpen(false); } },
-            { id: 'history',   label: 'History',    icon: Clock,    action: () => { window.location.href = `/history?container=${containerName}`; setSidebarOpen(false); } },
+            { id: 'history',   label: 'History',      icon: Clock,     action: () => { window.location.href = `/history?container=${containerName}`; setSidebarOpen(false); } },
           ].map(item => (
             <button key={item.id} onClick={item.action} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all ${activeTab === item.id ? `${dm ? 'bg-sky-950 text-sky-400 border border-sky-800' : 'bg-sky-50 text-sky-600 border border-sky-100'}` : `${t.text} ${dm ? 'hover:bg-gray-800' : 'hover:bg-gray-50'}`}`}>
               <item.icon className="w-4 h-4" />
@@ -621,7 +686,6 @@ const isTawyeen = urlContainer === 'ws-tawyeen' || containerName === 'ws-tawyeen
     </>
   );
 
-  // ─── Loading state ─────────────────────────────────────────────────────────────
   if (loading) {
     return (
       <div className={`min-h-screen ${dm ? 'bg-gray-950' : 'bg-slate-100'} flex items-center justify-center`}>
@@ -668,14 +732,11 @@ const isTawyeen = urlContainer === 'ws-tawyeen' || containerName === 'ws-tawyeen
 
   const filteredData = getFilteredData();
   const latestData = weatherData[weatherData.length - 1] || {};
-
-  // ← Latest Open-Meteo rain for the stat card
   const latestRain = getRainForTime(latestData.time as string);
 
-
   const correctedDirection = latestData.compassDir
-  ? compassToDegrees(latestData.compassDir as string)
-  : (latestData.direction ?? 0);
+    ? compassToDegrees(latestData.compassDir as string)
+    : (latestData.direction ?? 0);
   const lastReadingTime = getCombinedDateTime();
 
   const timeFilters = [
@@ -689,7 +750,6 @@ const isTawyeen = urlContainer === 'ws-tawyeen' || containerName === 'ws-tawyeen
 
   return (
     <div className={`min-h-screen ${t.bg} relative transition-colors duration-300`}>
-      {/* Background */}
       <div className="fixed inset-0 pointer-events-none overflow-hidden">
         <img src="/cloud4.jpg" className="absolute inset-0 w-full h-full object-cover" />
         <div className={`absolute inset-0 ${dm ? 'bg-black/55' : 'bg-white/40'}`} />
@@ -698,24 +758,16 @@ const isTawyeen = urlContainer === 'ws-tawyeen' || containerName === 'ws-tawyeen
       <Sidebar />
 
       <div className="relative min-h-screen flex flex-col">
-        {/* Header */}
         <header className={`sticky top-0 z-30 ${dm ? 'bg-gray-900/30 border-b border-white/10' : 'bg-white/20 border-b border-white/30'} backdrop-blur-xl transition-colors duration-300`}>
           <div className="flex items-center justify-between px-5 py-3.5">
             <div className="flex items-center gap-3">
               <button onClick={() => setSidebarOpen(!sidebarOpen)} className={`p-2 rounded-lg transition-colors ${dm ? 'hover:bg-gray-800 text-gray-400' : 'hover:bg-gray-100 text-gray-600'}`}>
                 <Menu className="w-5 h-5" />
               </button>
-              
-              
               <div className="flex items-center gap-2.5">
-                
                 <div className="h-[50px] flex items-center overflow-visible">
-  <img 
-  src={dm ? "/Taqsai.png" : "/taqsai-light.png"} 
-  alt="Taqsai" 
-  className="h-[180px] w-auto object-contain"
-/>
-</div>
+                  <img src={dm ? "/Taqsai.png" : "/taqsai-light.png"} alt="Taqsai" className="h-[180px] w-auto object-contain"/>
+                </div>
               </div>
             </div>
 
@@ -742,7 +794,6 @@ const isTawyeen = urlContainer === 'ws-tawyeen' || containerName === 'ws-tawyeen
           </div>
         </header>
 
-        {/* Main content */}
         <main className="flex-1 px-4 py-6 md:px-6 lg:px-8 max-w-screen-xl mx-auto w-full">
 
           {/* Station status banner */}
@@ -760,7 +811,6 @@ const isTawyeen = urlContainer === 'ws-tawyeen' || containerName === 'ws-tawyeen
               </div>
             </div>
             <div className="flex items-center gap-3">
-              
               <div className={`flex items-center gap-2 px-4 py-2.5 rounded-xl ${dm ? 'bg-white/10' : 'bg-white/50'} border ${t.divider}`}>
                 <Clock className={`w-4 h-4 ${dm ? 'text-sky-400' : 'text-sky-500'}`} />
                 <div>
@@ -771,25 +821,23 @@ const isTawyeen = urlContainer === 'ws-tawyeen' || containerName === 'ws-tawyeen
             </div>
           </div>
 
-          {/* Stat cards — Rain card now uses Open-Meteo data */}
+          {/* Stat cards */}
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4 mb-6">
-            <StatCard icon={Activity}   title="Temperature" value={latestData.tempC}          unit="°C"   gradient="from-rose-500 to-pink-500" />
-            <StatCard icon={Droplets}   title="Humidity"    value={latestData.humidity}        unit="%"    gradient="from-emerald-500 to-teal-500" />
-            <StatCard icon={Sun}        title="Irradiance"  value={latestData.irradiance}      unit="W/m²" gradient="from-amber-500 to-orange-500" />
-            <StatCard icon={Gauge} title="Pressure" 
-  value={isTawyeen ? getFakePressure(latestData.time) : latestData.pressure} 
-  unit="hPa" gradient="from-violet-500 to-purple-600" />
-            <StatCard icon={Wind}       title="Wind Speed"  value={latestData.avgWindSpeed}    unit="km/h" gradient="from-sky-500 to-cyan-500" />
-            {/* ↓ CHANGED: Rain now comes from Open-Meteo, badge shows source */}
+            <StatCard icon={Activity} title="Temperature" value={latestData.tempC}      unit="°C"   gradient="from-rose-500 to-pink-500" />
+            <StatCard icon={Droplets} title="Humidity"    value={latestData.humidity}   unit="%"    gradient="from-emerald-500 to-teal-500" />
+            <StatCard icon={Sun}      title="Irradiance"  value={latestData.irradiance} unit="W/m²" gradient="from-amber-500 to-orange-500" />
+            <StatCard icon={Gauge}    title="Pressure"
+              value={isTawyeen ? getFakePressure(latestData.time) : latestData.pressure}
+              unit="hPa" gradient="from-violet-500 to-purple-600" />
+            <WindSpeedStatCard value={latestData.avgWindSpeed} />
             <StatCard
               icon={CloudRain}
               title="Rain"
-              value={isTawyeen 
-  ? (rainLoading ? '…' : latestRain.toFixed(2)) 
-  : (latestData.rainRatePerHour ?? 0).toFixed(2)}
+              value={isTawyeen
+                ? (rainLoading ? '…' : latestRain.toFixed(2))
+                : (latestData.rainRatePerHour ?? 0).toFixed(2)}
               unit="mm"
               gradient="from-blue-500 to-indigo-500"
-              
             />
           </div>
 
@@ -841,35 +889,32 @@ const isTawyeen = urlContainer === 'ws-tawyeen' || containerName === 'ws-tawyeen
 
           {/* Charts row 1 */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 mb-5">
-            <ChartCard title="Temperature" dataKey="tempC" color="#f43f5e" unit="°C" icon={Activity} data={filteredData} gradient="from-rose-500 to-pink-500" />
-            <ChartCard title="Humidity" dataKey="humidity" color="#10b981" unit="%" icon={Droplets} data={filteredData} gradient="from-emerald-500 to-teal-500" />
+            <ChartCard title="Temperature" dataKey="tempC"    color="#f43f5e" unit="°C" icon={Activity} data={filteredData} gradient="from-rose-500 to-pink-500" />
+            <ChartCard title="Humidity"    dataKey="humidity" color="#10b981" unit="%"  icon={Droplets} data={filteredData} gradient="from-emerald-500 to-teal-500" />
           </div>
 
           {/* Charts row 2 */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 mb-5">
-            <ChartCard title="Solar Irradiance" dataKey="irradiance" color="#f59e0b" unit="W/m²" icon={Sun} data={filteredData} gradient="from-amber-500 to-orange-500" />
-           <ChartCard title="Atmospheric Pressure" dataKey="pressure" color="#8b5cf6" unit="hPa" icon={Gauge} 
-  data={isTawyeen 
-    ? filteredData.map(d => ({ ...d, pressure: getFakePressure(d.time) })) 
-    : filteredData
-  } 
-  gradient="from-violet-500 to-purple-600" />
+            <ChartCard title="Solar Irradiance"     dataKey="irradiance" color="#f59e0b" unit="W/m²" icon={Sun}   data={filteredData} gradient="from-amber-500 to-orange-500" />
+            <ChartCard title="Atmospheric Pressure" dataKey="pressure"   color="#8b5cf6" unit="hPa"  icon={Gauge}
+              data={isTawyeen ? filteredData.map(d => ({ ...d, pressure: getFakePressure(d.time) })) : filteredData}
+              gradient="from-violet-500 to-purple-600" />
           </div>
 
-          {/* ← NEW: Rain chart using Open-Meteo data */}
+          {/* Rain chart */}
           {isTawyeen && (
-  <div className="mb-5">
-    <ChartCard
-      title="Precipitation"
-      dataKey="openMeteoRain"
-      color="#6366f1"
-      unit="mm"
-      icon={CloudRain}
-      data={filteredData}
-      gradient="from-blue-500 to-indigo-500"
-    />
-  </div>
-)}
+            <div className="mb-5">
+              <ChartCard
+                title="Rain Rate"
+                dataKey="openMeteoRain"
+                color="#6366f1"
+                unit="mm"
+                icon={CloudRain}
+                data={filteredData}
+                gradient="from-blue-500 to-indigo-500"
+              />
+            </div>
+          )}
 
           {/* Wind row */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 mb-5">
@@ -883,20 +928,23 @@ const isTawyeen = urlContainer === 'ws-tawyeen' || containerName === 'ws-tawyeen
 
           {/* Historical data table */}
           <div ref={historyRef} className={`rounded-2xl shadow-md ${t.card} overflow-hidden`}>
-            <div className={`px-6 py-5 border-b ${t.divider} flex items-center gap-3`}>
-              <div className="p-2.5 rounded-xl bg-gradient-to-br from-slate-600 to-slate-800 shadow-md">
-                <Activity className="w-4 h-4 text-white" />
+            <div className={`px-6 py-5 border-b ${t.divider} flex items-center justify-between`}>
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 rounded-xl bg-gradient-to-br from-slate-600 to-slate-800 shadow-md">
+                  <Activity className="w-4 h-4 text-white" />
+                </div>
+                <div>
+                  <h3 className={`text-base font-bold ${t.text}`}>Historical Data</h3>
+                  <p className={`text-xs ${t.textSub}`}>{weatherData.length} total records</p>
+                </div>
               </div>
-              <div>
-                <h3 className={`text-base font-bold ${t.text}`}>Historical Data</h3>
-                <p className={`text-xs ${t.textSub}`}>{weatherData.length} total records</p>
-              </div>
+              <WindUnitToggle />
             </div>
             <div className="overflow-x-auto">
               <table className="min-w-full">
                 <thead>
                   <tr className={t.tableHead}>
-                    {['Time', 'Temp', 'Humidity', 'Irradiance', 'Wind', 'Direction', 'Pressure', 'Rain'].map(h => (
+                    {['Time', 'Temp', 'Humidity', 'Irradiance', `Wind (${windUnitLabel(windUnit)})`, 'Direction', 'Pressure', 'Rain'].map(h => (
                       <th key={h} className="px-5 py-3.5 text-left text-[10px] font-bold uppercase tracking-widest whitespace-nowrap">{h}</th>
                     ))}
                   </tr>
@@ -908,20 +956,21 @@ const isTawyeen = urlContainer === 'ws-tawyeen' || containerName === 'ws-tawyeen
                       <td className={`px-5 py-3.5 text-xs ${t.textSub}`}>{row.tempC}°C</td>
                       <td className={`px-5 py-3.5 text-xs ${t.textSub}`}>{row.humidity}%</td>
                       <td className={`px-5 py-3.5 text-xs ${t.textSub}`}>{row.irradiance} W/m²</td>
-                      <td className={`px-5 py-3.5 text-xs ${t.textSub}`}>{row.avgWindSpeed} km/h</td>
+                      <td className={`px-5 py-3.5 text-xs ${t.textSub}`}>
+                        {convertWind(row.avgWindSpeed, windUnit)} {windUnitLabel(windUnit)}
+                      </td>
                       <td className={`px-5 py-3.5 text-xs ${t.textSub}`}>{row.compassDir || `${row.direction}°`}</td>
                       <td className={`px-5 py-3.5 text-xs ${t.textSub}`}>
-  {isTawyeen ? getFakePressure(row.time) : row.pressure} hPa
-</td>
-                      {/* ↓ CHANGED: Rain column now uses Open-Meteo lookup */}
+                        {isTawyeen ? getFakePressure(row.time) : row.pressure} hPa
+                      </td>
                       <td className={`px-5 py-3.5 text-xs font-semibold ${
                         (isTawyeen ? getRainForTime(row.time as string) : (row.rainRatePerHour ?? 0)) > 0
                           ? dm ? 'text-blue-400' : 'text-blue-600'
                           : t.textSub
                       }`}>
-                        {isTawyeen 
-  ? (rainLoading ? '…' : `${getRainForTime(row.time as string).toFixed(2)} mm`)
-  : `${(row.rainRatePerHour ?? 0).toFixed(2)} mm`}
+                        {isTawyeen
+                          ? (rainLoading ? '…' : `${getRainForTime(row.time as string).toFixed(2)} mm`)
+                          : `${(row.rainRatePerHour ?? 0).toFixed(2)} mm`}
                       </td>
                     </tr>
                   ))}
